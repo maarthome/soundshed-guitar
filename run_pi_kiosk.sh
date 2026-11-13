@@ -29,6 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT="soundshed-kiosk-test"
 VT="${SOUNDSHED_VT:-7}"
 APP="${SOUNDSHED_APP:-${SCRIPT_DIR}/linux-dist-arm64/opt/Soundshed/soundshed-guitar/soundshed-guitar}"
+# labwc settings for this session only: no title bar on the app, and it fills the screen.
+LABWC_CONFIG_DIR="${SCRIPT_DIR}/tools/pi-kiosk/labwc"
 
 if [[ "$(id -u)" -eq 0 ]]; then
     echo "Run this script as your normal user, not as root or with sudo." >&2
@@ -73,7 +75,7 @@ start() {
         -p StandardError=journal \
         -p LimitRTPRIO=95 \
         -p LimitMEMLOCK=infinity \
-        "$(command -v labwc)" -s "$app_cmd"
+        "$(command -v labwc)" -C "$LABWC_CONFIG_DIR" -s "$app_cmd"
 
     echo "✓ Started on the local display (tty${VT})."
     echo "  Log:  $0 log"

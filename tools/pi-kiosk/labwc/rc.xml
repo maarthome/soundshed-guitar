@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!--
+  labwc settings used only by run_pi_kiosk.sh (passed with `labwc -C`), so your own
+  ~/.config/labwc is left alone.
+
+  labwc gives the app's X11 window a title bar and a border, which pushes an 800x480
+  window 27 px down and 1 px right on an 800x480 screen. The rule below removes the
+  decoration from the main window and makes it fill the screen.
+
+  The title is matched as well as the class so that other windows the app opens
+  (a hosted plugin's editor, a dialog) keep their title bar and their own size.
+-->
+<labwc_config>
+  <windowRules>
+    <windowRule identifier="Soundshed Guitar" title="Soundshed Guitar" serverDecoration="no">
+      <action name="Maximize" direction="both" />
+    </windowRule>
+  </windowRules>
+</labwc_config>
