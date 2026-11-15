@@ -657,6 +657,8 @@ set(GUITARFX_CORE_SOURCES
     src/controller/internal/PresetArchiveSupport.h
     src/controller/internal/PresetArchiveSupport.cpp
     src/controller/internal/RemoteResourceRefs.cpp
+    src/controller/internal/ResourceSources.h
+    src/controller/internal/ResourceSources.cpp
     src/controller/internal/RiffSupport.h
     src/controller/internal/RiffSupport.cpp
     src/controller/internal/SettingsKeys.h
@@ -840,6 +842,8 @@ set(GUITARFX_CORE_SOURCES
     src/music/Arpeggios.cpp
     src/music/ArpeggioProgression.h
     src/music/ArpeggioProgression.cpp
+    src/music/ListenAnalysis.h
+    src/music/ListenAnalysis.cpp
     src/music/ScalePlayback.h
     src/music/ScalePlayback.cpp
     src/music/ScaleGuideView.h

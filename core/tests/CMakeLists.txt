@@ -10,6 +10,7 @@ set(TEST_SOURCES
     AutomationBypassEndToEndTests.cpp
     AutomationNodeParamRangeTests.cpp
     AutomationNodeRealtimeTests.cpp
+    AutomationPerNodeTests.cpp
     AutomationPresetMappingTests.cpp
     AutomationSlotMidiToggleTests.cpp
     AutomationSlotThreadTests.cpp
@@ -178,6 +179,7 @@ set(TEST_SOURCES
     ToneSharingLinkTests.cpp
     JamPracticeToolTests.cpp
     ScaleGuideTests.cpp
+    ScaleGuideListenTests.cpp
     ScaleGuideUiClientTests.cpp
     TransposeBenchmark.cpp
     TransposeEffectTests.cpp
