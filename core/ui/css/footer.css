@@ -117,6 +117,41 @@
   text-align: right;
 }
 
+/* The dropout count is the last figure and usually one digit: against its label, with
+   room for a second, instead of pushed away from it to line up with nothing. */
+#footer-system-xruns strong {
+  min-width: 2ch;
+  text-align: left;
+}
+
+/* The full bar when its groups need the room (ts/systemStats.ts): two short rows, load and
+   temperature over dropouts, about half as wide as the row. */
+.footer-system-stats.is-stacked {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 1px 8px;
+  line-height: 1.15;
+}
+
+.footer-system-stats.is-stacked #footer-system-xruns {
+  grid-column: 1 / -1;
+}
+
+.footer-system-stats.is-stacked .footer-system-stat-label {
+  font-size: 8px;
+}
+
+.footer-system-stats.is-stacked .footer-system-stat strong {
+  min-width: 0;
+  font-size: 10px;
+}
+
+/* Still no room: off the bar until there is. */
+.footer-system-stats.is-squeezed-out {
+  display: none;
+}
+
 /* A busy or hot processor, or a dropout that just happened. */
 .footer-system-stat.is-alert strong {
   color: var(--color-error);
