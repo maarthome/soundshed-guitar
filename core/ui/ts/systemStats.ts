@@ -24,7 +24,7 @@ export interface SystemStats {
   cpuPercent: number | null;
   /** Degrees Celsius; null with no sensor. */
   temperatureC: number | null;
-  /** The audio device's dropouts since it was opened; null with no device. */
+  /** The audio device's dropouts since it was opened; null with no device. The bar shows them since the last reset. */
   xruns: number | null;
 }
 
@@ -37,8 +37,20 @@ export const SYSTEM_STATS_BUSY_PERCENT = 85;
 /** How long a new dropout stays marked. */
 const XRUN_FLASH_MS = 4000;
 
+/** The device's own count in the last message; null before the first, or with no device. */
 let lastXruns: number | null = null;
+/** The device's count when the readout was last pressed: the bar shows what has come since. */
+let xrunBaseline = 0;
 let xrunFlashTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * The dropouts to show for a device count: those since the last reset. A count below the
+ * baseline means the device was reopened and started again from nothing, so the baseline
+ * no longer stands for anything and all of the new count is shown.
+ */
+export function xrunsSinceReset(deviceCount: number, baseline: number): number {
+  return deviceCount >= baseline ? deviceCount - baseline : deviceCount;
+}
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
@@ -200,6 +212,10 @@ export function onSystemStats(payload: Record<string, unknown>): void {
     return;
   }
 
+  if (stats.xruns !== null && stats.xruns < xrunBaseline) {
+    xrunBaseline = 0;
+  }
+
   // A count that went up since the last message is a dropout that just happened.
   if (stats.xruns !== null && lastXruns !== null && stats.xruns > lastXruns) {
     if (xrunFlashTimer !== null) {
@@ -214,7 +230,7 @@ export function onSystemStats(payload: Record<string, unknown>): void {
 
   const cpuChanged = showFigure("footer-system-cpu", stats.cpuPercent === null ? null : formatCpuPercent(stats.cpuPercent), (stats.cpuPercent ?? 0) >= SYSTEM_STATS_BUSY_PERCENT);
   const tempChanged = showFigure("footer-system-temp", stats.temperatureC === null ? null : formatTemperature(stats.temperatureC), (stats.temperatureC ?? 0) >= SYSTEM_STATS_HOT_C);
-  const xrunsChanged = showFigure("footer-system-xruns", stats.xruns === null ? null : formatXruns(stats.xruns), xrunFlashTimer !== null);
+  const xrunsChanged = showFigure("footer-system-xruns", stats.xruns === null ? null : formatXruns(xrunsSinceReset(stats.xruns, xrunBaseline)), xrunFlashTimer !== null);
 
   const readout = el("footer-system-stats");
   const wasVisible = readout !== null && !readout.hidden;
@@ -225,7 +241,22 @@ export function onSystemStats(payload: Record<string, unknown>): void {
   }
 }
 
+/** Sets the dropouts shown back to 0: what the device has counted so far no longer shows. */
+export function resetXruns(): void {
+  if (lastXruns === null) {
+    return;
+  }
+  xrunBaseline = lastXruns;
+  if (xrunFlashTimer !== null) {
+    clearTimeout(xrunFlashTimer);
+    xrunFlashTimer = null;
+  }
+  // Now, not at the next message a second away: the press should be seen to land.
+  showFigure("footer-system-xruns", formatXruns(0), false);
+}
+
 /** Asks for the feed. Call once the bridge is up; a host without the figures says so and nothing is shown. */
 export function initSystemStats(): void {
+  el("footer-system-xruns")?.addEventListener("click", resetXruns);
   postMessage({ type: "watchSystemStats", enabled: true });
 }

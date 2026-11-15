@@ -59,10 +59,10 @@
           <span class="footer-system-stat-label">Temp</span>
           <strong>0°C</strong>
         </span>
-        <span class="footer-system-stat" id="footer-system-xruns" title="Audio dropouts (xruns) since the audio device was opened" hidden>
+        <button type="button" class="footer-system-stat footer-system-stat-button" id="footer-system-xruns" title="Audio dropouts (xruns) since you last reset the count. Press to set it to 0" aria-label="Audio dropouts. Press to reset to 0" hidden>
           <span class="footer-system-stat-label">Xruns</span>
           <strong>0</strong>
-        </span>
+        </button>
       </div>
       <!-- Compact density: the tempo, the metronome and its play when the bar has room for them
            (ts/footerFit.ts moves them here from the tempo group, and back). -->
@@ -163,10 +163,6 @@
           </button>
         </div>
         <div class="footer-group footer-view-group footer-right" aria-label="View options">
-          <div class="footer-zoom-control">
-            <span class="footer-sheet-label">Zoom</span>
-            <select id="zoom-level-select" class="footer-demo-select themed-select zoom-level-select" aria-label="UI zoom level" title="UI zoom level"></select>
-          </div>
           <div class="footer-theme-select">
             <span class="footer-sheet-label">Theme</span>
             <select id="theme-select" class="footer-demo-select themed-select" aria-label="Theme" title="Theme"></select>

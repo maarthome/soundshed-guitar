@@ -4,39 +4,19 @@ import type { UiSettings } from "./types.js";
 let currentSettings: UiSettings = { zoom: 1 };
 let pendingSend = false;
 const sendDelayMs = 250;
-const DEFAULT_ZOOM = 1;
+/**
+ * The interface zoom is fixed at 100% in this build, and the footer's zoom control is gone.
+ *
+ * The app runs full screen on a small panel, where the layout that fits is chosen from the
+ * window's size (ts/compactMode.ts). A zoom on top of that changed which layout was chosen
+ * and left controls too small to touch or too large to fit. Whatever zoom was saved before
+ * is replaced: the first save after start writes this one back.
+ */
+const FIXED_ZOOM = 1;
 
-function clampZoom(value: number): number {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_ZOOM;
-  }
-  return Math.max(0.5, Math.min(2.0, value));
-}
-
-function readAppliedZoom(): number {
-  const inlineZoom = (document.body.style.zoom || "").trim();
-  if (inlineZoom.length > 0) {
-    const parsedInline = Number.parseFloat(inlineZoom);
-    if (Number.isFinite(parsedInline)) {
-      return clampZoom(parsedInline);
-    }
-  }
-
-  const computedZoom = window.getComputedStyle(document.body).zoom;
-  if (computedZoom && computedZoom !== "normal") {
-    const parsedComputed = Number.parseFloat(computedZoom);
-    if (Number.isFinite(parsedComputed)) {
-      return clampZoom(parsedComputed);
-    }
-  }
-
-  return DEFAULT_ZOOM;
-}
-
-function applyZoomToDocument(zoom: number): number {
-  const clampedZoom = clampZoom(zoom);
-  document.body.style.zoom = `${clampedZoom}`;
-  return clampedZoom;
+function applyZoomToDocument(): number {
+  document.body.style.zoom = `${FIXED_ZOOM}`;
+  return FIXED_ZOOM;
 }
 
 function notifyUiSettingsApplied(): void {
@@ -55,7 +35,7 @@ function captureBounds() {
 }
 
 function captureZoom(): number {
-  return readAppliedZoom();
+  return FIXED_ZOOM;
 }
 
 function scheduleSend() {
@@ -69,9 +49,8 @@ function scheduleSend() {
 
 export function updateUiSettings(patch: Partial<UiSettings>): void {
   currentSettings = { ...currentSettings, ...patch };
-  if (typeof patch.zoom === "number") {
-    currentSettings.zoom = applyZoomToDocument(patch.zoom);
-  }
+  // A zoom asked for is not taken: see FIXED_ZOOM.
+  currentSettings.zoom = applyZoomToDocument();
   if (typeof patch.signalPathHeight === "number" && Number.isFinite(patch.signalPathHeight)) {
     currentSettings.signalPathHeight = patch.signalPathHeight;
   }
@@ -83,8 +62,8 @@ export function applyUiSettings(settings?: UiSettings): void {
   if (!settings) return;
   currentSettings = { ...currentSettings, ...settings };
 
-  const zoom = settings.zoom ?? currentSettings.zoom ?? DEFAULT_ZOOM;
-  currentSettings.zoom = applyZoomToDocument(zoom);
+  // The saved zoom is not applied: see FIXED_ZOOM.
+  currentSettings.zoom = applyZoomToDocument();
 
   if (typeof settings.signalPathHeight === "number" && Number.isFinite(settings.signalPathHeight)) {
     currentSettings.signalPathHeight = settings.signalPathHeight;

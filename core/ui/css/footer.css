@@ -124,6 +124,31 @@
   text-align: left;
 }
 
+/* The dropout count is a button: pressing it sets the count back to 0. It looks like the
+   other figures until it is pointed at or pressed; the padding, taken back by the margin,
+   makes it a larger thing to hit without moving anything. */
+.footer-system-stat-button {
+  margin: -8px -6px;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.footer-system-stat-button:hover,
+.footer-system-stat-button:active {
+  background: var(--footer-control-hover-bg);
+}
+
+.footer-system-stat-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
 /* The full bar when its groups need the room (ts/systemStats.ts): two short rows, load and
    temperature over dropouts, about half as wide as the row. */
 .footer-system-stats.is-stacked {
@@ -145,6 +170,12 @@
 .footer-system-stats.is-stacked .footer-system-stat strong {
   min-width: 0;
   font-size: 10px;
+}
+
+/* Stacked, the button has the other row right above it: no reaching up over that. */
+.footer-system-stats.is-stacked .footer-system-stat-button {
+  margin-block: 0;
+  padding-block: 0;
 }
 
 /* Still no room: off the bar until there is. */

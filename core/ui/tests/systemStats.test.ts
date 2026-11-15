@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCpuPercent, formatTemperature, formatXruns, normalizeSystemStats } from "../ts/systemStats.js";
+import { formatCpuPercent, formatTemperature, formatXruns, normalizeSystemStats, xrunsSinceReset } from "../ts/systemStats.js";
 
 describe("footer system load readout", () => {
   it("has nothing to show where the host has no figures", () => {
@@ -13,6 +13,15 @@ describe("footer system load readout", () => {
     expect(normalizeSystemStats({ available: true, cpuPercent: 20 })).toEqual({ cpuPercent: 20, temperatureC: null, xruns: null });
     expect(normalizeSystemStats({ available: true, cpuPercent: 140, xruns: -1 })).toEqual({ cpuPercent: 100, temperatureC: null, xruns: null });
     expect(normalizeSystemStats({ available: true, cpuPercent: "12", temperatureC: 40 })).toEqual({ cpuPercent: null, temperatureC: 40, xruns: null });
+  });
+
+  it("counts dropouts from the last reset", () => {
+    expect(xrunsSinceReset(7, 0)).toBe(7);
+    expect(xrunsSinceReset(7, 5)).toBe(2);
+    expect(xrunsSinceReset(5, 5)).toBe(0);
+    // The device was reopened and counts from nothing again: the old baseline means nothing now.
+    expect(xrunsSinceReset(2, 5)).toBe(2);
+    expect(xrunsSinceReset(0, 5)).toBe(0);
   });
 
   it("formats each figure for the bar", () => {
