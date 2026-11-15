@@ -5,6 +5,8 @@ import {
   remoteAccessPasswordProblem,
   remoteAccessStatus,
   remoteAccessTargets,
+  remoteAccessWebAddresses,
+  remoteAccessWebStatus,
   type RemoteAccessState,
 } from "../ts/settings/remoteAccess.js";
 
@@ -21,6 +23,12 @@ function state(overrides: Partial<RemoteAccessState> = {}): RemoteAccessState {
     minPasswordLength: 6,
     maxPasswordLength: 64,
     error: "",
+    webEnabled: false,
+    webRunning: false,
+    webCanRun: true,
+    webProblem: "",
+    webPort: 6080,
+    webError: "",
     ...overrides,
   };
 }
@@ -33,7 +41,7 @@ describe("remote access settings", () => {
   });
 
   it("reads a snapshot and fills in what is missing", () => {
-    expect(normalizeRemoteAccessState({ available: true })).toEqual(state({ canRun: false, username: "", addresses: [] }));
+    expect(normalizeRemoteAccessState({ available: true })).toEqual(state({ canRun: false, username: "", addresses: [], webCanRun: false }));
     expect(
       normalizeRemoteAccessState({
         available: true,
@@ -45,8 +53,15 @@ describe("remote access settings", () => {
         port: 5901,
         addresses: ["10.0.0.2", 7, ""],
         error: "x",
+        webEnabled: true,
+        webRunning: true,
+        webCanRun: true,
+        webPort: 6081,
+        webError: "y",
       }),
-    ).toEqual(state({ enabled: true, running: true, hasPassword: true, port: 5901, addresses: ["10.0.0.2"], error: "x" }));
+    ).toEqual(
+      state({ enabled: true, running: true, hasPassword: true, port: 5901, addresses: ["10.0.0.2"], error: "x", webEnabled: true, webRunning: true, webPort: 6081, webError: "y" }),
+    );
   });
 
   it("says where a viewer connects", () => {
@@ -63,6 +78,18 @@ describe("remote access settings", () => {
     );
     expect(remoteAccessStatus(state({ hasPassword: true, enabled: true }))).toContain("not running");
     expect(remoteAccessStatus(state({ canRun: false, problem: "Install wayvnc" }))).toBe("Install wayvnc");
+  });
+
+  it("describes browser access under its switch", () => {
+    expect(remoteAccessWebAddresses(state())).toBe("http://192.168.1.20:6080");
+    expect(remoteAccessWebAddresses(state({ addresses: ["10.0.0.2", "192.168.1.20"] }))).toBe("http://10.0.0.2:6080 or http://192.168.1.20:6080");
+    expect(remoteAccessWebStatus(state())).toMatch(/^Off\. /);
+    expect(remoteAccessWebStatus(state({ webCanRun: false, webProblem: "Install novnc" }))).toBe("Install novnc");
+    expect(remoteAccessWebStatus(state({ webEnabled: true }))).toBe("On, and starts when remote access is turned on.");
+    expect(remoteAccessWebStatus(state({ enabled: true, running: true, webEnabled: true }))).toContain("not running");
+    expect(remoteAccessWebStatus(state({ enabled: true, running: true, webEnabled: true, webRunning: true }))).toBe(
+      'On. Open http://192.168.1.20:6080 in a web browser and sign in with user name "soundshed" and the password above.',
+    );
   });
 
   it("applies the engine's password rule", () => {

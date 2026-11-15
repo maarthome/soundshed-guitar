@@ -26,9 +26,18 @@
  * Between them they cover the common viewers: TigerVNC and others that speak VeNCrypt
  * use the certificate, RealVNC Viewer the RSA key.
  *
+ * Browser access is a second switch on top of that, for when installing a viewer is
+ * not wanted: websockify serves noVNC (a VNC viewer that is a web page) on kWebPort and
+ * relays it to a second wayvnc that listens on this device only. A browser cannot do the
+ * encrypted sign-ins above, so that second server takes Apple's Diffie-Hellman sign-in
+ * instead, which noVNC speaks: the same user name and password, still protected, but the
+ * picture and the input that follow are not. That is the trade the switch makes, and why
+ * it is separate, off by default, and leaves the server viewers use as strict as it was.
+ *
  * Everything lives in <profile>/data/v1/settings/remote-access/, readable by the user
- * only: settings.json (on/off and the password), wayvnc's config (which has to hold the
- * password in plain text, hence the permissions), the keys, and wayvnc's log.
+ * only: settings.json (the switches and the password), wayvnc's config (which has to
+ * hold the password in plain text, hence the permissions), the keys, the web folder
+ * noVNC is served from, and the two servers' logs.
  *
  * The UI sends {"type": "remoteAccess", "action": ...} and every request is answered
  * with a whole "remoteAccessState" snapshot, as is the server stopping on its own. The
@@ -45,6 +54,10 @@ class StandaloneRemoteAccess final : private juce::Timer
     /// The user name a viewer signs in with. Fixed, so the password is the only thing to set.
     static constexpr const char* kUserName = "soundshed";
     static constexpr int kPort = 5900;
+    /// Where a browser finds the noVNC page.
+    static constexpr int kWebPort = 6080;
+    /// The VNC server behind that page. Reachable from this device only.
+    static constexpr int kWebServerPort = 5901;
     static constexpr int kMinPasswordLength = 6;
     static constexpr int kMaxPasswordLength = 64;
 
@@ -66,6 +79,7 @@ class StandaloneRemoteAccess final : private juce::Timer
 
     juce::String setEnabled(bool enabled);
     juce::String setPassword(const juce::String& password);
+    void setWebEnabled(bool enabled);
 
     /// Empty once wayvnc is running, else why it could not be started.
     juce::String startServer();
@@ -75,11 +89,25 @@ class StandaloneRemoteAccess final : private juce::Timer
     /// Why the server cannot run here at all (no Wayland session, wayvnc missing); empty if it can.
     [[nodiscard]] juce::String environmentProblem() const;
 
+    // Browser access: websockify serving noVNC, relayed to a VNC server of its own.
+    /// Empty once both are running, else why they could not be started.
+    juce::String startWebProxy();
+    void stopWebProxy();
+    [[nodiscard]] bool isWebProxyRunning() const;
+    /// Why browser access cannot run here (websockify or noVNC missing); empty if it can.
+    [[nodiscard]] juce::String webEnvironmentProblem() const;
+    /// The folder websockify serves: noVNC's files, and a front page that opens the viewer.
+    bool prepareWebFolder() const;
+    /// Ends a websockify left behind by a run of the app that did not get to stop it.
+    void endStaleWebProxy() const;
+
     /// Makes whichever of the TLS certificate and the RSA key is missing. False if neither exists afterwards.
     bool ensureKeys();
     bool writeServerConfig() const;
-    void askStaleServerToExit() const;
-    [[nodiscard]] juce::String lastLogLines() const;
+    bool writeWebServerConfig() const;
+    /// Asks the wayvnc behind a control socket to exit; nothing happens if there is none.
+    static void askServerToExit(const juce::File& socket);
+    [[nodiscard]] static juce::String lastLogLines(const juce::File& log);
 
     void loadSettings();
     void saveSettings() const;
@@ -91,16 +119,28 @@ class StandaloneRemoteAccess final : private juce::Timer
     [[nodiscard]] juce::File tlsKeyFile() const;
     [[nodiscard]] juce::File tlsCertificateFile() const;
     [[nodiscard]] juce::File rsaKeyFile() const;
+    [[nodiscard]] juce::File webServerConfigFile() const;
+    [[nodiscard]] juce::File webServerLogFile() const;
+    [[nodiscard]] juce::File webServerControlSocket() const;
+    [[nodiscard]] juce::File webFolder() const;
+    [[nodiscard]] juce::File webLogFile() const;
+    [[nodiscard]] juce::File webPidFile() const;
 
     juce::File mFolder;
     SendToUI mSendToUI;
 
     bool mEnabled = false;
+    bool mWebEnabled = false;
     juce::String mPassword;
 
     std::unique_ptr<juce::ChildProcess> mServer;
     /// Why the server is not running although it is turned on. Cleared by the next start.
     juce::String mError;
+
+    std::unique_ptr<juce::ChildProcess> mWebServer;
+    std::unique_ptr<juce::ChildProcess> mWebProxy;
+    /// The same for browser access.
+    juce::String mWebError;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StandaloneRemoteAccess)
 };

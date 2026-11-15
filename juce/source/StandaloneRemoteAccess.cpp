@@ -2,7 +2,9 @@
 
 #if JUCE_LINUX
 
+    #include <csignal>
     #include <sys/stat.h>
+    #include <sys/types.h>
 
 namespace
 {
@@ -10,10 +12,24 @@ constexpr int kPollIntervalMs = 1000;
 /// Long enough for an RSA key on a small board.
 constexpr int kKeyGenerationTimeoutMs = 60000;
 constexpr int kGracefulExitMs = 1500;
+/// How long a server gets to fail at once (a taken port, a bad config) before it counts as up.
+constexpr int kEarlyExitMs = 400;
+/// Where Debian's noVNC package puts the viewer page and its scripts.
+constexpr const char* kDefaultNoVncFolder = "/usr/share/novnc";
+/// What the front page sends a browser on to: connect at once, fit the window, and come back after a drop.
+constexpr const char* kNoVncPage = "vnc.html?autoconnect=true&resize=scale&reconnect=true";
 
 juce::String environmentVariable(const char* name)
 {
     return juce::SystemStats::getEnvironmentVariable(name, {});
+}
+
+/// noVNC's folder: SOUNDSHED_NOVNC_FOLDER for a copy kept somewhere else, else the package's.
+juce::File noVncFolder()
+{
+    const auto chosen = environmentVariable("SOUNDSHED_NOVNC_FOLDER");
+    return juce::File(chosen.isNotEmpty() && juce::File::isAbsolutePath(chosen) ? chosen
+                                                                                : juce::String(kDefaultNoVncFolder));
 }
 
 /// The program's full path if it is on PATH, else an empty string.
@@ -112,6 +128,10 @@ void StandaloneRemoteAccess::handleRequest(const juce::var& message)
     {
         requestError = setPassword(message.getProperty("password", {}).toString());
     }
+    else if (action == "setWebEnabled")
+    {
+        setWebEnabled(static_cast<bool>(message.getProperty("enabled", false)));
+    }
     else if (action != "getState")
     {
         requestError = "Unknown remote access action: " + action;
@@ -153,14 +173,39 @@ juce::String StandaloneRemoteAccess::passwordProblem(const juce::String& passwor
 //==============================================================================
 void StandaloneRemoteAccess::timerCallback()
 {
+    auto changed = false;
+
     if (mServer != nullptr && !mServer->isRunning())
     {
         // It went away by itself: the port was taken, the compositor refused it, or it crashed.
         mServer.reset();
-        stopTimer();
+        // Nothing left to relay to.
+        stopWebProxy();
 
-        const auto details = lastLogLines();
+        const auto details = lastLogLines(logFile());
         mError = "The VNC server stopped." + (details.isNotEmpty() ? " " + details : juce::String());
+        changed = true;
+    }
+
+    // Browser access needs both of its servers; either going takes it down.
+    const auto webServerDied = mWebServer != nullptr && !mWebServer->isRunning();
+    const auto webProxyDied = mWebProxy != nullptr && !mWebProxy->isRunning();
+
+    if (webServerDied || webProxyDied)
+    {
+        const auto details = lastLogLines(webServerDied ? webServerLogFile() : webLogFile());
+        stopWebProxy();
+        mWebError = "Browser access stopped." + (details.isNotEmpty() ? " " + details : juce::String());
+        changed = true;
+    }
+
+    if (mServer == nullptr && mWebServer == nullptr && mWebProxy == nullptr)
+    {
+        stopTimer();
+    }
+
+    if (changed)
+    {
         sendState();
     }
 }
@@ -199,6 +244,14 @@ void StandaloneRemoteAccess::sendState()
     state->setProperty("maxPasswordLength", kMaxPasswordLength);
     state->setProperty("error", mError);
 
+    const auto webProblem = webEnvironmentProblem();
+    state->setProperty("webEnabled", mWebEnabled);
+    state->setProperty("webRunning", isWebProxyRunning());
+    state->setProperty("webCanRun", webProblem.isEmpty());
+    state->setProperty("webProblem", webProblem);
+    state->setProperty("webPort", kWebPort);
+    state->setProperty("webError", mWebError);
+
     mSendToUI(juce::JSON::toString(juce::var(state.get()), true));
 }
 
@@ -208,6 +261,7 @@ juce::String StandaloneRemoteAccess::setEnabled(bool enabled)
     {
         mEnabled = false;
         mError.clear();
+        mWebError.clear();
         saveSettings();
         stopServer();
         return {};
@@ -266,6 +320,23 @@ juce::String StandaloneRemoteAccess::setPassword(const juce::String& password)
     return {};
 }
 
+void StandaloneRemoteAccess::setWebEnabled(bool enabled)
+{
+    mWebEnabled = enabled;
+    mWebError.clear();
+    saveSettings();
+
+    // Browser access has servers of its own, so viewers that are connected stay connected.
+    if (!enabled)
+    {
+        stopWebProxy();
+    }
+    else if (isServerRunning())
+    {
+        mWebError = startWebProxy();
+    }
+}
+
 //==============================================================================
 juce::String StandaloneRemoteAccess::startServer()
 {
@@ -299,7 +370,7 @@ juce::String StandaloneRemoteAccess::startServer()
     }
 
     // One left behind by a run of the app that did not get to stop it would hold the port.
-    askStaleServerToExit();
+    askServerToExit(controlSocket());
 
     logFile().deleteFile();
 
@@ -324,20 +395,25 @@ juce::String StandaloneRemoteAccess::startServer()
 
     // A bad config or a taken port ends it within a moment; say so now rather than
     // showing "on" and correcting it a second later.
-    if (server->waitForProcessToFinish(400))
+    if (server->waitForProcessToFinish(kEarlyExitMs))
     {
-        const auto details = lastLogLines();
+        const auto details = lastLogLines(logFile());
         return "The VNC server could not start." + (details.isNotEmpty() ? " " + details : juce::String());
     }
 
     mServer = std::move(server);
     startTimer(kPollIntervalMs);
+
+    // Browser access rides on the server. Failing to start it is its own error: a viewer
+    // can still connect.
+    mWebError = mWebEnabled ? startWebProxy() : juce::String();
     return {};
 }
 
 void StandaloneRemoteAccess::stopServer()
 {
     stopTimer();
+    stopWebProxy();
 
     if (mServer == nullptr)
     {
@@ -347,7 +423,7 @@ void StandaloneRemoteAccess::stopServer()
     if (mServer->isRunning())
     {
         // Ask first, so viewers are told the session has ended.
-        askStaleServerToExit();
+        askServerToExit(controlSocket());
 
         if (!mServer->waitForProcessToFinish(kGracefulExitMs))
         {
@@ -381,6 +457,230 @@ juce::String StandaloneRemoteAccess::environmentProblem() const
     return {};
 }
 
+//==============================================================================
+juce::String StandaloneRemoteAccess::startWebProxy()
+{
+    stopWebProxy();
+
+    if (auto problem = webEnvironmentProblem(); problem.isNotEmpty())
+    {
+        return problem;
+    }
+
+    // noVNC signs in to a VNC server of its own, reachable from this device only; see
+    // writeWebServerConfig() for why it cannot use the one viewers connect to.
+    if (!rsaKeyFile().existsAsFile())
+    {
+        return "Browser access needs an RSA key. Install openssh-client, then turn remote access off and on.";
+    }
+
+    if (!writeWebServerConfig())
+    {
+        return "Could not write " + webServerConfigFile().getFullPathName();
+    }
+
+    if (!prepareWebFolder())
+    {
+        return "Could not prepare " + webFolder().getFullPathName();
+    }
+
+    // Ones left behind by a run of the app that did not get to stop them would hold the ports.
+    askServerToExit(webServerControlSocket());
+    endStaleWebProxy();
+
+    webServerLogFile().deleteFile();
+    webLogFile().deleteFile();
+
+    juce::StringArray serverCommand;
+    serverCommand.add("/bin/sh");
+    serverCommand.add("-c");
+    serverCommand.add(R"(exec "$1" -C "$2" -S "$3" >"$4" 2>&1)");
+    serverCommand.add("soundshed-remote-access");
+    serverCommand.add(findProgram("wayvnc"));
+    serverCommand.add(webServerConfigFile().getFullPathName());
+    serverCommand.add(webServerControlSocket().getFullPathName());
+    serverCommand.add(webServerLogFile().getFullPathName());
+
+    auto server = std::make_unique<juce::ChildProcess>();
+
+    if (!server->start(serverCommand, 0))
+    {
+        return "Could not start wayvnc for browser access.";
+    }
+
+    if (server->waitForProcessToFinish(kEarlyExitMs))
+    {
+        const auto details = lastLogLines(webServerLogFile());
+        return "Browser access could not start." + (details.isNotEmpty() ? " " + details : juce::String());
+    }
+
+    mWebServer = std::move(server);
+
+    // Through a shell for the same reason as wayvnc, and to leave the process id behind
+    // for endStaleWebProxy(): websockify has no control socket to ask it to exit through.
+    juce::StringArray proxyCommand;
+    proxyCommand.add("/bin/sh");
+    proxyCommand.add("-c");
+    proxyCommand.add(R"(echo $$ >"$5"; exec "$1" --web "$2" "$3" "$4" >"$6" 2>&1)");
+    proxyCommand.add("soundshed-remote-access");
+    proxyCommand.add(findProgram("websockify"));
+    proxyCommand.add(webFolder().getFullPathName());
+    proxyCommand.add("0.0.0.0:" + juce::String(kWebPort));
+    proxyCommand.add("127.0.0.1:" + juce::String(kWebServerPort));
+    proxyCommand.add(webPidFile().getFullPathName());
+    proxyCommand.add(webLogFile().getFullPathName());
+
+    auto proxy = std::make_unique<juce::ChildProcess>();
+
+    if (!proxy->start(proxyCommand, 0))
+    {
+        stopWebProxy();
+        return "Could not start websockify.";
+    }
+
+    if (proxy->waitForProcessToFinish(kEarlyExitMs))
+    {
+        const auto details = lastLogLines(webLogFile());
+        stopWebProxy();
+        return "Browser access could not start." + (details.isNotEmpty() ? " " + details : juce::String());
+    }
+
+    mWebProxy = std::move(proxy);
+
+    // Its own watch: browser access can be turned on while the main server is already up.
+    startTimer(kPollIntervalMs);
+    return {};
+}
+
+void StandaloneRemoteAccess::stopWebProxy()
+{
+    if (mWebProxy != nullptr)
+    {
+        if (mWebProxy->isRunning())
+        {
+            mWebProxy->kill();
+            mWebProxy->waitForProcessToFinish(kGracefulExitMs);
+        }
+
+        mWebProxy.reset();
+        webPidFile().deleteFile();
+    }
+
+    if (mWebServer != nullptr)
+    {
+        if (mWebServer->isRunning())
+        {
+            askServerToExit(webServerControlSocket());
+
+            if (!mWebServer->waitForProcessToFinish(kGracefulExitMs))
+            {
+                mWebServer->kill();
+                mWebServer->waitForProcessToFinish(kGracefulExitMs);
+            }
+        }
+
+        mWebServer.reset();
+        webServerControlSocket().deleteFile();
+    }
+}
+
+bool StandaloneRemoteAccess::isWebProxyRunning() const
+{
+    return mWebProxy != nullptr && mWebProxy->isRunning() && mWebServer != nullptr && mWebServer->isRunning();
+}
+
+juce::String StandaloneRemoteAccess::webEnvironmentProblem() const
+{
+    if (findProgram("websockify").isEmpty() || !noVncFolder().getChildFile("vnc.html").existsAsFile())
+    {
+        return "Browser access is not installed. Install it with: sudo apt install novnc websockify";
+    }
+
+    return {};
+}
+
+bool StandaloneRemoteAccess::prepareWebFolder() const
+{
+    const auto folder = webFolder();
+
+    // Made afresh each time, so it follows the installed noVNC. The links inside are not
+    // followed: only the links themselves go.
+    folder.deleteRecursively(false);
+
+    if (!folder.createDirectory().wasOk())
+    {
+        return false;
+    }
+
+    for (const auto& entry : noVncFolder().findChildFiles(juce::File::findFilesAndDirectories, false))
+    {
+        // The front page is ours.
+        if (entry.getFileName() != "index.html")
+        {
+            entry.createSymbolicLink(folder.getChildFile(entry.getFileName()), true);
+        }
+    }
+
+    const juce::String page(kNoVncPage);
+    const auto escapedPage = page.replace("&", "&amp;");
+
+    juce::StringArray html;
+    html.add("<!DOCTYPE html>");
+    html.add("<html lang=\"en\">");
+    html.add("<head>");
+    html.add("<meta charset=\"utf-8\">");
+    html.add("<title>Soundshed Guitar</title>");
+    html.add("<meta http-equiv=\"refresh\" content=\"0; url=" + escapedPage + "\">");
+    html.add("</head>");
+    html.add("<body><a href=\"" + escapedPage + "\">Open Soundshed Guitar</a></body>");
+    html.add("</html>");
+
+    return folder.getChildFile("index.html").replaceWithText(html.joinIntoString("\n") + "\n", false, false, "\n") &&
+           folder.getChildFile("vnc.html").exists();
+}
+
+void StandaloneRemoteAccess::endStaleWebProxy() const
+{
+    const auto pidFile = webPidFile();
+    const auto pid = pidFile.loadFileAsString().trim().getIntValue();
+    pidFile.deleteFile();
+
+    // 0 and 1 would signal a whole process group or init.
+    if (pid <= 1)
+    {
+        return;
+    }
+
+    // Only if that process is still websockify: the id may have gone to something else since.
+    const juce::File process("/proc/" + juce::String(pid));
+
+    // The arguments are separated by zero bytes, which would end a string at the first one
+    // (the interpreter, for a script such as websockify).
+    juce::MemoryBlock commandLine;
+    process.getChildFile("cmdline").loadFileAsData(commandLine);
+
+    for (auto& byte : commandLine)
+    {
+        if (byte == 0)
+        {
+            byte = ' ';
+        }
+    }
+
+    if (!commandLine.toString().contains("websockify"))
+    {
+        return;
+    }
+
+    ::kill(static_cast<pid_t>(pid), SIGTERM);
+
+    for (auto waited = 0; waited < kGracefulExitMs && process.exists(); waited += 50)
+    {
+        juce::Thread::sleep(50);
+    }
+}
+
+//==============================================================================
 bool StandaloneRemoteAccess::ensureKeys()
 {
     const auto haveTls = [this] { return tlsKeyFile().existsAsFile() && tlsCertificateFile().existsAsFile(); };
@@ -455,10 +755,30 @@ bool StandaloneRemoteAccess::writeServerConfig() const
     return writeOwnerOnly(configFile(), lines.joinIntoString("\n") + "\n");
 }
 
-void StandaloneRemoteAccess::askStaleServerToExit() const
+bool StandaloneRemoteAccess::writeWebServerConfig() const
 {
-    const auto socket = controlSocket();
+    // A browser cannot do TLS or RSA-AES inside a VNC connection, so noVNC cannot sign in
+    // to the server viewers use. It gets one of its own that:
+    //  - listens on this device only (websockify relays the browser to it);
+    //  - has no TLS certificate, since a server that has one offers VeNCrypt first, which
+    //    noVNC accepts and then cannot complete;
+    //  - allows Apple's Diffie-Hellman sign-in (relax_encryption), which noVNC speaks. That
+    //    protects the user name and password, and nothing after them.
+    juce::StringArray lines;
+    lines.add("use_relative_paths=true");
+    lines.add("address=127.0.0.1");
+    lines.add("port=" + juce::String(kWebServerPort));
+    lines.add("enable_auth=true");
+    lines.add("username=" + juce::String(kUserName));
+    lines.add("password=" + mPassword);
+    lines.add("rsa_private_key_file=" + rsaKeyFile().getFileName());
+    lines.add("relax_encryption=true");
 
+    return writeOwnerOnly(webServerConfigFile(), lines.joinIntoString("\n") + "\n");
+}
+
+void StandaloneRemoteAccess::askServerToExit(const juce::File& socket)
+{
     if (!socket.exists())
     {
         return;
@@ -470,10 +790,10 @@ void StandaloneRemoteAccess::askStaleServerToExit() const
     }
 }
 
-juce::String StandaloneRemoteAccess::lastLogLines() const
+juce::String StandaloneRemoteAccess::lastLogLines(const juce::File& log)
 {
     juce::StringArray lines;
-    lines.addLines(logFile().loadFileAsString());
+    lines.addLines(log.loadFileAsString());
     lines.removeEmptyStrings();
 
     while (lines.size() > 2)
@@ -503,6 +823,7 @@ void StandaloneRemoteAccess::loadSettings()
     }
 
     mEnabled = static_cast<bool>(parsed.getProperty("enabled", false)) && mPassword.isNotEmpty();
+    mWebEnabled = static_cast<bool>(parsed.getProperty("webEnabled", false));
 }
 
 void StandaloneRemoteAccess::saveSettings() const
@@ -516,6 +837,7 @@ void StandaloneRemoteAccess::saveSettings() const
 
     juce::DynamicObject::Ptr settings(new juce::DynamicObject());
     settings->setProperty("enabled", mEnabled);
+    settings->setProperty("webEnabled", mWebEnabled);
     settings->setProperty("password", mPassword);
 
     writeOwnerOnly(settingsFile(), juce::JSON::toString(juce::var(settings.get())));
@@ -563,6 +885,36 @@ juce::File StandaloneRemoteAccess::tlsCertificateFile() const
 juce::File StandaloneRemoteAccess::rsaKeyFile() const
 {
     return mFolder.getChildFile("rsa_key.pem");
+}
+
+juce::File StandaloneRemoteAccess::webServerConfigFile() const
+{
+    return mFolder.getChildFile("wayvnc-web.config");
+}
+
+juce::File StandaloneRemoteAccess::webServerLogFile() const
+{
+    return mFolder.getChildFile("wayvnc-web.log");
+}
+
+juce::File StandaloneRemoteAccess::webServerControlSocket() const
+{
+    return juce::File(controlSocket().getFullPathName() + "-web");
+}
+
+juce::File StandaloneRemoteAccess::webFolder() const
+{
+    return mFolder.getChildFile("web");
+}
+
+juce::File StandaloneRemoteAccess::webLogFile() const
+{
+    return mFolder.getChildFile("websockify.log");
+}
+
+juce::File StandaloneRemoteAccess::webPidFile() const
+{
+    return mFolder.getChildFile("websockify.pid");
 }
 
 #endif // JUCE_LINUX

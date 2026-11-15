@@ -7,6 +7,9 @@
  * of its own beyond what is typed into the password field: every request is answered
  * with a whole `remoteAccessState` snapshot, and the controls are redrawn from it.
  *
+ * Browser access is a second switch: the same screen as a web page (noVNC), for when
+ * installing a viewer is not wanted. It only runs while remote access itself is on.
+ *
  * The password is never sent back, so the field shows one only while it is being
  * typed or has just been generated. Generate exists because a touch-only device has
  * no keyboard to type one with: it makes a password, shows it, and Save stores it.
@@ -30,6 +33,14 @@ export interface RemoteAccessState {
   maxPasswordLength: number;
   /** From the last request that failed, or the server stopping by itself. */
   error: string;
+  /** The browser switch. It is remembered while remote access is off, and runs with it. */
+  webEnabled: boolean;
+  webRunning: boolean;
+  /** False where noVNC or websockify is not installed. */
+  webCanRun: boolean;
+  webProblem: string;
+  webPort: number;
+  webError: string;
 }
 
 const DEFAULT_MIN_PASSWORD_LENGTH = 6;
@@ -87,6 +98,12 @@ export function normalizeRemoteAccessState(raw: unknown): RemoteAccessState | nu
     minPasswordLength: wholeNumber(payload.minPasswordLength, DEFAULT_MIN_PASSWORD_LENGTH),
     maxPasswordLength: wholeNumber(payload.maxPasswordLength, DEFAULT_MAX_PASSWORD_LENGTH),
     error: text(payload.error),
+    webEnabled: payload.webEnabled === true,
+    webRunning: payload.webRunning === true,
+    webCanRun: payload.webCanRun === true,
+    webProblem: text(payload.webProblem),
+    webPort: wholeNumber(payload.webPort, 6080),
+    webError: text(payload.webError),
   };
 }
 
@@ -116,6 +133,32 @@ export function remoteAccessStatus(state: RemoteAccessState): string {
     return "Off. Set a password to turn it on.";
   }
   return "Off.";
+}
+
+/** The addresses to type into a browser. */
+export function remoteAccessWebAddresses(state: RemoteAccessState): string {
+  if (state.addresses.length === 0) {
+    return `http://<this device's network address>:${state.webPort}`;
+  }
+  return state.addresses.map((address) => `http://${address}:${state.webPort}`).join(" or ");
+}
+
+/** The line under the browser switch. */
+export function remoteAccessWebStatus(state: RemoteAccessState): string {
+  if (!state.webCanRun) {
+    return state.webProblem || "Browser access cannot run on this system.";
+  }
+  if (state.webEnabled && state.webRunning) {
+    const user = state.username ? `user name "${state.username}" and ` : "";
+    return `On. Open ${remoteAccessWebAddresses(state)} in a web browser and sign in with ${user}the password above.`;
+  }
+  if (state.webEnabled && !state.enabled) {
+    return "On, and starts when remote access is turned on.";
+  }
+  if (state.webEnabled) {
+    return "Turned on, but not running. Turn it off and on again to retry.";
+  }
+  return "Off. Lets a web browser show and operate this screen, with no viewer to install. The password is protected when signing in; the picture and what you click and type are not encrypted on the way, so use it on your own network only.";
 }
 
 /** The same rule the engine applies (StandaloneRemoteAccess::passwordProblem); empty when the password will do. */
@@ -203,6 +246,24 @@ function render(): void {
     error.textContent = message;
     error.hidden = message === "";
   }
+
+  const webToggle = el<HTMLInputElement>("remote-access-web-toggle");
+  if (webToggle) {
+    webToggle.checked = state.webEnabled;
+    // Turning it off is always allowed.
+    webToggle.disabled = !state.webEnabled && !state.webCanRun;
+  }
+
+  const webStatus = el("remote-access-web-status");
+  if (webStatus) {
+    webStatus.textContent = remoteAccessWebStatus(state);
+  }
+
+  const webError = el("remote-access-web-error");
+  if (webError) {
+    webError.textContent = state.webError;
+    webError.hidden = state.webError === "";
+  }
 }
 
 function setPasswordVisible(visible: boolean): void {
@@ -249,6 +310,10 @@ export function initRemoteAccessSettings(): void {
     passwordError = "";
     passwordSaved = false;
     request("setEnabled", { enabled: (event.target as HTMLInputElement).checked });
+  });
+
+  el<HTMLInputElement>("remote-access-web-toggle")?.addEventListener("change", (event) => {
+    request("setWebEnabled", { enabled: (event.target as HTMLInputElement).checked });
   });
 
   const password = el<HTMLInputElement>("remote-access-password");
