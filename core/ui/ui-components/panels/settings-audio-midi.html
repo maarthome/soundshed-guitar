@@ -44,6 +44,19 @@
                 </div>
                 <div class="settings-hint" id="audio-device-buffer-size-hint" hidden></div>
                 <div class="settings-hint" id="audio-device-latency"></div>
+                <!-- Standalone on Linux: ts/settings/audioTuning.ts, from audioTuningState. With
+                     the buffer size above, the numbers a JACK user sets as -p, -n and -P. -->
+                <div class="settings-row settings-row-two" id="audio-tuning-periods-row" hidden>
+                  <label for="audio-tuning-periods">Periods</label>
+                  <select id="audio-tuning-periods"></select>
+                </div>
+                <div class="settings-hint" id="audio-tuning-periods-hint" hidden></div>
+                <div class="settings-row settings-row-two" id="audio-tuning-priority-row" hidden>
+                  <label for="audio-tuning-priority">Realtime Priority</label>
+                  <select id="audio-tuning-priority"></select>
+                </div>
+                <div class="settings-hint" id="audio-tuning-priority-hint" hidden></div>
+                <div class="settings-hint is-warning" id="audio-tuning-error" role="alert" hidden></div>
                 <div class="settings-row" id="audio-device-mute-row">
                   <label for="audio-device-mute-input">Mute Input</label>
                   <label class="toggle-switch">

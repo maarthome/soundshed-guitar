@@ -4,6 +4,7 @@
 #include "ProductInfo.h"
 #include "ProfileFolder.h"
 #include "StandaloneAudioSettings.h"
+#include "StandaloneAudioTuning.h"
 #include "StandaloneRemoteAccess.h"
 #include "StandaloneSystemStats.h"
 #include "WindowChrome.h"
@@ -372,6 +373,29 @@ class MainWindow : public juce::DocumentWindow
                     mSystemStats->handleRequest(message);
                 }
             });
+
+            // Settings > Audio & MIDI: the audio thread's realtime priority and the ALSA periods.
+            // The saved choices were put in force before the device first opened (createPluginHolder).
+            StandaloneAudioTuning::Hooks tuningHooks;
+            tuningHooks.periodsSupported = SOUNDSHED_ALSA_PERIODS_PATCH != 0;
+            tuningHooks.reopenDevice = [this] {
+                // JUCE reads the periods when it opens a device: close it and open it again as it was.
+                if (mPluginHolder != nullptr && mPluginHolder->deviceManager.getCurrentAudioDevice() != nullptr)
+                {
+                    mPluginHolder->deviceManager.closeAudioDevice();
+                    mPluginHolder->deviceManager.restartLastAudioDevice();
+                }
+            };
+            mAudioTuning = std::make_unique<StandaloneAudioTuning>(
+                StandaloneAudioTuning::defaultSettingsFile(), std::move(tuningHooks),
+                [adapter](const juce::String& json) { adapter->SendMessageToUI(json.toStdString()); });
+
+            adapter->setAudioTuningHandler([this](const juce::var& message) {
+                if (mAudioTuning != nullptr)
+                {
+                    mAudioTuning->handleRequest(message);
+                }
+            });
 #endif
 
 #if !SOUNDSHED_MOBILE
@@ -474,6 +498,7 @@ class MainWindow : public juce::DocumentWindow
 #if JUCE_LINUX
             adapter->setRemoteAccessHandler(nullptr);
             adapter->setSystemStatsHandler(nullptr);
+            adapter->setAudioTuningHandler(nullptr);
 #endif
         }
 
@@ -484,6 +509,8 @@ class MainWindow : public juce::DocumentWindow
         mRemoteAccess = nullptr;
         // Asks the holder's device manager for its dropouts, so it goes before the holder.
         mSystemStats = nullptr;
+        // Reopens the holder's device, so it goes before the holder too.
+        mAudioTuning = nullptr;
 #endif
 
         // JUCE asserts if a kiosk component leaves the desktop still in kiosk mode (iOS, or
@@ -784,6 +811,7 @@ class MainWindow : public juce::DocumentWindow
 #if JUCE_LINUX
     std::unique_ptr<StandaloneRemoteAccess> mRemoteAccess;
     std::unique_ptr<StandaloneSystemStats> mSystemStats;
+    std::unique_ptr<StandaloneAudioTuning> mAudioTuning;
 #endif
 
 #if !SOUNDSHED_MOBILE
@@ -1077,6 +1105,12 @@ class SoundshedGuitarApplication : public juce::JUCEApplication
         const auto* preferredSetupOptions = &preferredSetup;
 #else
             const juce::AudioDeviceManager::AudioDeviceSetup* preferredSetupOptions = nullptr;
+#endif
+
+#if JUCE_LINUX
+        // The holder opens the audio device as it is made. The saved ALSA periods are read by
+        // JUCE at that moment, and the realtime priority by the audio thread's first block.
+        StandaloneAudioTuning::applySavedAtStartup(StandaloneAudioTuning::defaultSettingsFile());
 #endif
 
         return std::make_unique<juce::StandalonePluginHolder>(mAppProperties.getUserSettings(), false, juce::String{},

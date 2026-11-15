@@ -33,6 +33,7 @@ import { onInstalledPresetArchiveDeleted, onPresetArchivesInstalled, onPresetArc
 import { onPresetArchivePreviewed, onPresetArchivePreviewFailed } from "./toneSharingPanel/preview.js";
 import { onDspPerformance, onSld, onSldA, onSldL, onSldRoster, onSldS } from "./messages/telemetry.js";
 import { onTunerLiveModeChanged, onTunerReferenceChanged, onTunerStarted, onTunerStopped, onTunerUpdate } from "./messages/tunerHandlers.js";
+import { onAudioTuningState, refreshAudioTuningSoon } from "./settings/audioTuning.js";
 import { onRemoteAccessState } from "./settings/remoteAccess.js";
 import { onSystemStats } from "./systemStats.js";
 import type { MessageHandler } from "./messages/types.js";
@@ -119,8 +120,13 @@ const MESSAGE_HANDLERS: Record<string, MessageHandler> = {
   "inputLevellingTraining": onInputLevellingTraining,
   "inputLevellingSaved": onInputLevellingSaved,
   "outputMutedChanged": onOutputMutedChanged,
-  "audioDeviceState": onAudioDeviceState,
+  // A change of device or buffer size also changes the buffer the periods line reports.
+  "audioDeviceState": (payload) => {
+    onAudioDeviceState(payload);
+    refreshAudioTuningSoon();
+  },
   "audioDeviceLevels": onAudioDeviceLevels,
+  "audioTuningState": onAudioTuningState,
   "remoteAccessState": onRemoteAccessState,
   "systemStats": onSystemStats,
   "sharedSyncUpdated": onSharedSyncUpdated,

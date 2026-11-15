@@ -160,6 +160,14 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     using SystemStatsHandler = std::function<void(const juce::var& message)>;
     void setSystemStatsHandler(SystemStatsHandler handler);
 
+    // ── Standalone audio tuning ────────────────────────────────────
+    /// Where "audioTuning" messages go: the audio thread's realtime priority and the ALSA
+    /// periods, in Settings > Audio & MIDI (StandaloneAudioTuning). The standalone app's
+    /// window installs this on Linux; with none installed the message is answered
+    /// `available: false`, and the two settings stay hidden. Message thread only.
+    using AudioTuningHandler = std::function<void(const juce::var& message)>;
+    void setAudioTuningHandler(AudioTuningHandler handler);
+
     // ── Accessors ──────────────────────────────────────────────────
     [[nodiscard]] guitarfx::PluginController& getController()
     {
@@ -186,6 +194,7 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     WindowChromeHandler mWindowChromeHandler;
     RemoteAccessHandler mRemoteAccessHandler;
     SystemStatsHandler mSystemStatsHandler;
+    AudioTuningHandler mAudioTuningHandler;
 
     std::filesystem::path mAssetRoot;
     std::unique_ptr<juce::FileChooser> mFileChooser;

@@ -21,7 +21,7 @@
 #endif
 
 #include "ControllerMidiOutput.h"
-#include "dsp/RealtimeParallel.h"
+#include "StandaloneAudioTuning.h"
 #include "resources/PluginPathUtils.h"
 
 // Same include order as Main.cpp: the standalone window header expects the audio and GUI
@@ -160,30 +160,6 @@ bool shouldUseHeadlessLv2ManifestEditor(const PluginProcessorAdapter& processor)
 {
     return processor.wrapperType == juce::AudioProcessor::wrapperType_LV2 && std::getenv("DISPLAY") == nullptr &&
            std::getenv("WAYLAND_DISPLAY") == nullptr;
-}
-#endif
-
-#if JUCE_LINUX
-/// Gives the standalone app's audio thread realtime scheduling, the first time it runs a block.
-///
-/// JUCE's ALSA device starts the thread that calls processBlock as an ordinary one, so it takes
-/// its turn with everything else on the machine: the web view painting, a VNC server compressing
-/// the screen. With a small buffer (64 frames is 1.3 ms) it is then a little late now and then,
-/// and each time is a dropout, on a machine that is mostly idle. SCHED_FIFO puts it ahead of all
-/// of that. The priority is SOUNDSHED_AUDIO_PRIO, as for the DSP helper threads, which have to
-/// sit at the audio thread's level. It needs an rtprio limit (run_pi_kiosk.sh gives one, as does
-/// the audio group on most distributions); without it the call fails and nothing changes.
-///
-/// Once per thread, so a device that is reopened, which starts a new thread, is covered.
-void raiseStandaloneAudioThreadPriorityOnce() noexcept
-{
-    static thread_local bool raised = false;
-
-    if (!raised)
-    {
-        raised = true;
-        guitarfx::rtparallel::RaisePriorityOfThisThreadForAudio();
-    }
 }
 #endif
 
@@ -473,10 +449,12 @@ void PluginProcessorAdapter::processBlock(juce::AudioBuffer<float>& buffer, juce
     mAudioThreadPlacement.beginBlock();
 #endif
 #if JUCE_LINUX
-    // Only the standalone app owns the thread this runs on. In a host it is the host's.
+    // The realtime priority chosen in Settings > Audio & MIDI, applied when it changes and to
+    // each new audio thread. Only the standalone app owns the thread this runs on: in a host
+    // it is the host's.
     if (wrapperType == wrapperType_Standalone)
     {
-        raiseStandaloneAudioThreadPriorityOnce();
+        StandaloneAudioTuning::applyOnAudioThread();
     }
 #endif
 
@@ -1401,6 +1379,11 @@ void PluginProcessorAdapter::setSystemStatsHandler(SystemStatsHandler handler)
     mSystemStatsHandler = std::move(handler);
 }
 
+void PluginProcessorAdapter::setAudioTuningHandler(AudioTuningHandler handler)
+{
+    mAudioTuningHandler = std::move(handler);
+}
+
 void PluginProcessorAdapter::NotifyStateChanged()
 {
     updateHostDisplay(juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged(true));
@@ -1591,6 +1574,21 @@ void PluginProcessorAdapter::handleWebMessage(const juce::String& message)
             else
             {
                 SendMessageToUI(R"({"type":"systemStats","available":false})");
+            }
+
+            return;
+        }
+
+        // The audio thread's realtime priority and the ALSA periods: the standalone app's too.
+        if (obj->getProperty(typeId).toString() == "audioTuning")
+        {
+            if (mAudioTuningHandler)
+            {
+                mAudioTuningHandler(parsed);
+            }
+            else
+            {
+                SendMessageToUI(R"({"type":"audioTuningState","available":false})");
             }
 
             return;

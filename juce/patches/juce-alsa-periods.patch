@@ -1,0 +1,18 @@
+diff --git a/modules/juce_audio_devices/native/juce_ALSA_linux.cpp b/modules/juce_audio_devices/native/juce_ALSA_linux.cpp
+index 295ecc8..66b441f 100644
+--- a/modules/juce_audio_devices/native/juce_ALSA_linux.cpp
++++ b/modules/juce_audio_devices/native/juce_ALSA_linux.cpp
+@@ -293,6 +293,13 @@ public:
+ 
+         int dir = 0;
+         unsigned int periods = 4;
++
++        // Soundshed Guitar: SOUNDSHED_ALSA_PERIODS chooses how many periods the device buffer
++        // holds (JUCE's own choice is 4). Fewer is less output latency and less time for a
++        // late block to catch up. Applied by juce/patches/juce-alsa-periods.patch.
++        if (const char* requestedPeriods = ::getenv ("SOUNDSHED_ALSA_PERIODS"))
++            periods = (unsigned int) jlimit (2, 8, ::atoi (requestedPeriods));
++
+         snd_pcm_uframes_t samplesPerPeriod = (snd_pcm_uframes_t) bufferSize;
+ 
+         if (JUCE_ALSA_FAILED (snd_pcm_hw_params_set_rate_near (handle, hwParams, &sampleRate, nullptr))

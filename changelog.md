@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+* **Realtime priority and periods settings (Linux standalone)**: Settings > Audio & MIDI has two new rows under Buffer Size. **Periods** sets how many blocks the audio device holds (2, 3 or 4; it was always 4): fewer means less output latency and less margin for a late block. **Realtime Priority** sets how urgent the audio thread is (Off, or 10 to 95; 70 to start with), and the line under it says what the thread really has. Both are remembered. With Buffer Size these are the three numbers a JACK user knows as -p, -n and -P.
 * **Fewer audio dropouts on Linux (standalone)**: the app now gives its audio thread realtime priority, so it no longer waits its turn behind screen drawing or screen sharing. With a small buffer that waiting caused dropouts even on a mostly idle machine. `run_pi_kiosk.sh` grants the permission, sets the priority (`SOUNDSHED_AUDIO_PRIO`, default 70) and switches the CPU to its `performance` governor at every start.
 * **Interface zoom fixed at 100%**: the Zoom control is gone from the footer bar and the OPTIONS sheet, and the interface always draws at 100%, whatever zoom was saved before. On a small full-screen panel the layout is chosen from the screen's size, and a zoom on top of that picked the wrong one.
 * **Reset the dropout count**: pressing the XRUNS figure on the footer bar sets it back to 0, so you can count dropouts from a moment you choose (after changing the buffer size, say).

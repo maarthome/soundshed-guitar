@@ -333,6 +333,41 @@ endif()
 message(STATUS "Using pinned JUCE version ${_guitarfx_detected_juce_version}")
 
 # On Github Actions, JUCE checkout provisioning is handled by the workflow checkout step.
+# JUCE's ALSA device asks for 4 periods and has no setting for it. On Linux this patch makes it
+# read SOUNDSHED_ALSA_PERIODS when it opens a device, which Settings > Audio & MIDI sets
+# (juce/source/StandaloneAudioTuning). It is applied to the submodule's working tree here, once:
+# "git apply --reverse --check" succeeds when it is already in. If a later JUCE no longer takes
+# the patch, the build goes on without it and the app does not offer the setting.
+set(SOUNDSHED_ALSA_PERIODS_PATCH 0)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_alsa_periods_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/juce-alsa-periods.patch")
+    find_package(Git QUIET)
+    if(GIT_FOUND AND EXISTS "${_alsa_periods_patch}")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_alsa_periods_patch}"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/JUCE"
+            RESULT_VARIABLE _alsa_periods_already
+            OUTPUT_QUIET ERROR_QUIET)
+        if(_alsa_periods_already EQUAL 0)
+            set(SOUNDSHED_ALSA_PERIODS_PATCH 1)
+        else()
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" apply "${_alsa_periods_patch}"
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/JUCE"
+                RESULT_VARIABLE _alsa_periods_applied
+                OUTPUT_QUIET ERROR_QUIET)
+            if(_alsa_periods_applied EQUAL 0)
+                set(SOUNDSHED_ALSA_PERIODS_PATCH 1)
+                message(STATUS "Applied juce/patches/juce-alsa-periods.patch to JUCE")
+            endif()
+        endif()
+    endif()
+    if(NOT SOUNDSHED_ALSA_PERIODS_PATCH)
+        message(WARNING "juce/patches/juce-alsa-periods.patch could not be applied to JUCE: "
+                        "the ALSA periods setting will not be offered.")
+    endif()
+endif()
+
 add_subdirectory(JUCE)
 
 # JUCE's recommended LTO flags, except for MSVC ARM64. There, link-time code generation
@@ -484,6 +519,8 @@ set(CommonSourceFiles
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneRemoteAccess.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemStats.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemStats.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneAudioTuning.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneAudioTuning.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/WindowChrome.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/WindowChrome.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/editor/SoundshedEditorBase.h"
@@ -512,6 +549,9 @@ target_compile_definitions(SharedCode
 
     # Use custom standalone app entry point (Main.cpp)
     JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1
+
+    # 1 when JUCE's ALSA device reads SOUNDSHED_ALSA_PERIODS (juce/patches/juce-alsa-periods.patch)
+    SOUNDSHED_ALSA_PERIODS_PATCH=${SOUNDSHED_ALSA_PERIODS_PATCH}
 
     # JUCE_WEB_BROWSER and JUCE_USE_CURL off by default
     JUCE_WEB_BROWSER=1  # If you set this to 1, add `NEEDS_WEB_BROWSER TRUE` to the `juce_add_plugin` call

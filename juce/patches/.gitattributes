@@ -1,0 +1,2 @@
+# The patches carry the line endings of the files they change (JUCE keeps CRLF): never convert them.
+*.patch -text
