@@ -5,8 +5,13 @@
 # disables and deletes the swap file again — also when the build fails or is
 # interrupted with Ctrl+C.
 #
-# Usage: ./build_pi.sh [build_linux.sh options]
-#   Every argument is passed straight through to build_linux.sh, for example:
+# By default only the standalone app is built: no VST3, CLAP or LV2 plugin and
+# no zip archive, which is all a Pi that runs the app itself needs and much
+# quicker. Pass --all for the full build.
+#
+# Usage: ./build_pi.sh [--all] [build_linux.sh options]
+#   --all   Build the plugins (VST3, CLAP, LV2) and the zip archive as well
+#   Every other argument is passed straight through to build_linux.sh, for example:
 #     ./build_pi.sh --jobs 2
 #     ./build_pi.sh --skip-ts
 #
@@ -31,6 +36,21 @@ fi
 if [[ ! "$SWAP_SIZE_GB" =~ ^[0-9]+$ || "$SWAP_SIZE_GB" -lt 1 ]]; then
     echo "SWAP_SIZE_GB must be a positive whole number (received: '${SWAP_SIZE_GB}')." >&2
     exit 1
+fi
+
+# --all is ours; the rest goes to build_linux.sh.
+BUILD_ALL=false
+BUILD_ARGS=()
+for argument in "$@"; do
+    if [[ "$argument" == "--all" ]]; then
+        BUILD_ALL=true
+    else
+        BUILD_ARGS+=("$argument")
+    fi
+done
+
+if [[ "$BUILD_ALL" == false ]]; then
+    BUILD_ARGS=(--standalone-only --no-zip "${BUILD_ARGS[@]}")
 fi
 
 SWAP_CREATED=false
@@ -121,7 +141,7 @@ swapon --show
 echo ""
 
 build_status=0
-bash "${SCRIPT_DIR}/build_linux.sh" "$@" || build_status=$?
+bash "${SCRIPT_DIR}/build_linux.sh" "${BUILD_ARGS[@]}" || build_status=$?
 
 if [[ "$build_status" -eq 0 ]]; then
     echo ""

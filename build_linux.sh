@@ -9,6 +9,7 @@
 #   --skip-configure   Skip the CMake configure step
 #   --skip-build       Skip CMake build step (only re-stage artifacts)
 #   --no-lv2           Skip building and staging the LV2 plugin bundle
+#   --standalone-only  Build and stage only the standalone app: no VST3, CLAP or LV2
 #   --no-zip           Skip creation of a .zip archive of the distribution
 #   --lv2, --zip       Accepted for older callers (CI, README); both are on by default
 #   --dist-dir <p>     Override the output staging directory (default: linux-dist-<arch>)
@@ -43,6 +44,9 @@ SKIP_CONFIGURE=false
 SKIP_BUILD=false
 BUILD_LV2=true
 BUILD_ZIP=true
+# Only the app itself. The plugin targets stay configured (so switching back and forth
+# does not reconfigure and rebuild everything); they are just not built or staged.
+STANDALONE_ONLY=false
 ARCH_REQUEST="native"
 DIST_DIR_OVERRIDE=""
 BUILD_DIR_OVERRIDE=""
@@ -69,6 +73,7 @@ Usage: ./build_linux.sh [options]
     --skip-configure   Skip the CMake configure step
     --skip-build       Skip CMake build step (only re-stage artifacts)
     --no-lv2           Skip building and staging the LV2 plugin bundle
+    --standalone-only  Build and stage only the standalone app: no VST3, CLAP or LV2
     --no-zip           Skip creation of a .zip archive of the distribution
     --dist-dir <p>     Override the output staging directory (default: linux-dist-<arch>)
     --build-dir <p>    Override the CMake build directory (default: juce/builds-linux-<arch>)
@@ -222,6 +227,7 @@ while [[ $# -gt 0 ]]; do
         --skip-configure) SKIP_CONFIGURE=true ;;
         --skip-build)     SKIP_BUILD=true ;;
         --no-lv2)         BUILD_LV2=false ;;
+        --standalone-only) STANDALONE_ONLY=true ;;
         --no-zip)         BUILD_ZIP=false ;;
         # The opt-in spellings from before LV2 and zip became the default; CI and the
         # README still pass them.
@@ -445,7 +451,11 @@ build_for_arch() {
     echo "  Target arch: ${target_arch}"
     echo "  Build dir: ${build_dir}"
     echo "  Dist dir: ${dist_dir}"
-    echo "  LV2 plugin: ${BUILD_LV2}"
+    if [[ "$STANDALONE_ONLY" == true ]]; then
+        echo "  Targets: standalone app only"
+    else
+        echo "  LV2 plugin: ${BUILD_LV2}"
+    fi
     echo "  Build jobs: ${BUILD_JOBS} (LV2: ${LV2_BUILD_JOBS})"
     if [[ -n "$toolchain_file" ]]; then
         echo "  Toolchain: ${toolchain_file#"$SCRIPT_DIR/"}"
@@ -492,18 +502,20 @@ build_for_arch() {
         echo "▶ Building Standalone (${target_arch})…"
         cmake --build "$build_dir" --target SoundshedGuitar_Standalone --parallel "$BUILD_JOBS"
 
-        echo ""
-        echo "▶ Building VST3 (${target_arch})…"
-        cmake --build "$build_dir" --target SoundshedGuitar_VST3 --parallel "$BUILD_JOBS"
-
-        echo ""
-        echo "▶ Building CLAP (${target_arch})…"
-        cmake --build "$build_dir" --target SoundshedGuitar_CLAP --parallel "$BUILD_JOBS"
-
-        if [[ "$BUILD_LV2" == true ]]; then
+        if [[ "$STANDALONE_ONLY" == false ]]; then
             echo ""
-            echo "▶ Building LV2 (${target_arch})…"
-            cmake --build "$build_dir" --target SoundshedGuitar_LV2 --parallel "$LV2_BUILD_JOBS"
+            echo "▶ Building VST3 (${target_arch})…"
+            cmake --build "$build_dir" --target SoundshedGuitar_VST3 --parallel "$BUILD_JOBS"
+
+            echo ""
+            echo "▶ Building CLAP (${target_arch})…"
+            cmake --build "$build_dir" --target SoundshedGuitar_CLAP --parallel "$BUILD_JOBS"
+
+            if [[ "$BUILD_LV2" == true ]]; then
+                echo ""
+                echo "▶ Building LV2 (${target_arch})…"
+                cmake --build "$build_dir" --target SoundshedGuitar_LV2 --parallel "$LV2_BUILD_JOBS"
+            fi
         fi
 
         echo ""
@@ -534,21 +546,29 @@ build_for_arch() {
     fi
 
     rm -rf "$dist_dir"
-    mkdir -p "$app_dst" "$vst3_dst" "$clap_dst"
+    mkdir -p "$app_dst"
 
-    if [[ "$BUILD_LV2" == true ]]; then
-        mkdir -p "$lv2_dst"
+    if [[ "$STANDALONE_ONLY" == false ]]; then
+        mkdir -p "$vst3_dst" "$clap_dst"
+
+        if [[ "$BUILD_LV2" == true ]]; then
+            mkdir -p "$lv2_dst"
+        fi
     fi
 
     cp -R "${standalone_src_dir}/." "$app_dst/"
     echo "  ✓ Standalone payload → ${app_dst#"$SCRIPT_DIR/"}"
     rename_staged_linux_executable "$app_dst" "$PRODUCT" "$LINUX_STANDALONE_EXECUTABLE_NAME"
 
-    copy_artifact "$vst3_src" "$vst3_dst"
-    stage_clap_bundle "$clap_src" "${artefacts_dir}/CLAP" "$clap_dst"
+    # Plugins left in the build folder by an earlier full build are older than this app:
+    # a standalone-only run does not stage them.
+    if [[ "$STANDALONE_ONLY" == false ]]; then
+        copy_artifact "$vst3_src" "$vst3_dst"
+        stage_clap_bundle "$clap_src" "${artefacts_dir}/CLAP" "$clap_dst"
 
-    if [[ "$BUILD_LV2" == true ]]; then
-        copy_artifact "$lv2_src" "$lv2_dst"
+        if [[ "$BUILD_LV2" == true ]]; then
+            copy_artifact "$lv2_src" "$lv2_dst"
+        fi
     fi
 
     DIST_DIR="$dist_dir"
