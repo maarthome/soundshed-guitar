@@ -28,6 +28,7 @@ import { initNamEngineToggle, refreshNamEngineToggle } from "./settings/namEngin
 import { initMonoOutputUnityToggle, refreshMonoOutputUnityToggle } from "./settings/monoOutputUnity.js";
 import { initLibraryExport } from "./settings/libraryExport.js";
 import { initLibraryFilters, refreshLibraryView } from "./settings/libraryView.js";
+import { initRemoteAccessSettings, syncRemoteAccessAvailability } from "./settings/remoteAccess.js";
 import { initEquipmentTabs, initLibraryTabs } from "./settings/tabs.js";
 import { applyTone3000ModeVisibility, clearApiKey, initTone3000ProxyHealthCheck, initTone3000UseSoundshedApiToggle, refreshTone3000ApiKeyField, saveApiKey, updateTone3000ApiModeStatus, updateTone3000ProxyHealthStatus } from "./settings/tone3000Settings.js";
 import { refreshSettingsUpdateBanner, updateCurrentVersionDisplay } from "./settings/updateBanner.js";
@@ -57,6 +58,7 @@ export function initSettingsPanel(): void {
   saveButton?.addEventListener("click", () => void saveApiKey());
   clearButton?.addEventListener("click", () => void clearApiKey());
   initAudioDeviceSettings();
+  initRemoteAccessSettings();
   initDiagnosticsToggle();
   initUserInputCalibrationControls();
   initFeatureToggles();
@@ -202,6 +204,7 @@ export function refreshSettingsView(): void {
     updateTone3000ProxyHealthStatus("API health: disabled in direct mode.");
   }
   syncAudioDeviceSettingsAvailability(Boolean(uiState.environment?.audioDeviceSettings));
+  syncRemoteAccessAvailability(Boolean(uiState.environment?.standalone));
   syncFeatureVisibility();
   updateSignalDiagnosticsView();
   updateCurrentVersionDisplay();

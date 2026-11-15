@@ -1358,6 +1358,11 @@ void PluginProcessorAdapter::setWindowChromeHandler(WindowChromeHandler handler)
     mWindowChromeHandler = std::move(handler);
 }
 
+void PluginProcessorAdapter::setRemoteAccessHandler(RemoteAccessHandler handler)
+{
+    mRemoteAccessHandler = std::move(handler);
+}
+
 void PluginProcessorAdapter::NotifyStateChanged()
 {
     updateHostDisplay(juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged(true));
@@ -1517,6 +1522,22 @@ void PluginProcessorAdapter::handleWebMessage(const juce::String& message)
             if (mWindowChromeHandler)
             {
                 mWindowChromeHandler(parsed);
+            }
+
+            return;
+        }
+
+        // The standalone app's VNC server: the screen's business, not the engine's.
+        if (obj->getProperty(typeId).toString() == "remoteAccess")
+        {
+            if (mRemoteAccessHandler)
+            {
+                mRemoteAccessHandler(parsed);
+            }
+            else
+            {
+                // A plugin format, or a platform without it. Say so, so the UI hides the section.
+                SendMessageToUI(R"({"type":"remoteAccessState","available":false})");
             }
 
             return;

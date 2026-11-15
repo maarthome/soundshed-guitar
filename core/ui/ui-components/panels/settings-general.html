@@ -102,6 +102,35 @@
               <div class="settings-hint">Exports your presets and every blend, plus IR/NAM files from the library based on the selected scope.</div>
             </div>
 
+            <h2 id="settings-remote-access-heading" hidden>Remote Access</h2>
+            <div class="settings-section" id="settings-remote-access-section" hidden>
+              <h3>Screen Sharing (VNC)</h3>
+              <div class="settings-row">
+                <label for="remote-access-toggle">Allow remote access</label>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="remote-access-toggle" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="settings-hint" id="remote-access-status" aria-live="polite"></div>
+              <div class="settings-row">
+                <label for="remote-access-password">Password</label>
+                <input type="password" id="remote-access-password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Choose a password" />
+                <button id="remote-access-password-generate" type="button" class="secondary">Generate</button>
+                <button id="remote-access-password-save" type="button">Save</button>
+              </div>
+              <div class="settings-row">
+                <label for="remote-access-password-show">Show password</label>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="remote-access-password-show" />
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="settings-hint" id="remote-access-password-hint"></div>
+              <div class="settings-hint is-warning" id="remote-access-error" role="alert" hidden></div>
+              <div class="settings-hint">Shows this screen in a VNC viewer on another computer, tablet or phone on your network, and lets it operate the app. The connection is encrypted; a viewer asks you to accept this device's certificate the first time. Turn it off when you do not need it.</div>
+            </div>
+
             <h2>Software Updates</h2>
             <div class="settings-section">
               <h3>Current Version</h3>

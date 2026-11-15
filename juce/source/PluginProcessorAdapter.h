@@ -144,6 +144,14 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     using WindowChromeHandler = std::function<void(const juce::var& message)>;
     void setWindowChromeHandler(WindowChromeHandler handler);
 
+    // ── Standalone remote access ───────────────────────────────────
+    /// Where "remoteAccess" messages go: the VNC server behind Settings > Remote Access
+    /// (StandaloneRemoteAccess). The standalone app's window installs this on Linux; with
+    /// none installed the message is answered `available: false`, which hides the section.
+    /// Message thread only.
+    using RemoteAccessHandler = std::function<void(const juce::var& message)>;
+    void setRemoteAccessHandler(RemoteAccessHandler handler);
+
     // ── Accessors ──────────────────────────────────────────────────
     [[nodiscard]] guitarfx::PluginController& getController()
     {
@@ -168,6 +176,7 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     AudioDeviceRequestHandler mAudioDeviceRequestHandler;
     DeviceLatencyQuery mDeviceLatencyQuery;
     WindowChromeHandler mWindowChromeHandler;
+    RemoteAccessHandler mRemoteAccessHandler;
 
     std::filesystem::path mAssetRoot;
     std::unique_ptr<juce::FileChooser> mFileChooser;

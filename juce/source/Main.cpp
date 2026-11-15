@@ -4,6 +4,7 @@
 #include "ProductInfo.h"
 #include "ProfileFolder.h"
 #include "StandaloneAudioSettings.h"
+#include "StandaloneRemoteAccess.h"
 #include "WindowChrome.h"
 #include "editor/SoundshedEditorBase.h"
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -337,6 +338,22 @@ class MainWindow : public juce::DocumentWindow
             adapter->setDeviceLatencyQuery(
                 [this] { return mAudioSettings != nullptr ? mAudioSettings->deviceLatencySamples() : 0; });
 
+#if JUCE_LINUX
+            // Settings > Remote Access: a VNC server for the app's screen, for a device whose
+            // own screen is a small touch panel. It starts here if it was left on.
+            mRemoteAccess =
+                std::make_unique<StandaloneRemoteAccess>(getRemoteAccessFolder(), [adapter](const juce::String& json) {
+                    adapter->SendMessageToUI(json.toStdString());
+                });
+
+            adapter->setRemoteAccessHandler([this](const juce::var& message) {
+                if (mRemoteAccess != nullptr)
+                {
+                    mRemoteAccess->handleRequest(message);
+                }
+            });
+#endif
+
 #if !SOUNDSHED_MOBILE
             // The page sends its header colours whenever the theme changes, and is told
             // whether the caption took them, so it can drop the title it would repeat.
@@ -416,9 +433,17 @@ class MainWindow : public juce::DocumentWindow
             adapter->setAudioDeviceRequestHandler(nullptr);
             adapter->setDeviceLatencyQuery(nullptr);
             adapter->setWindowChromeHandler(nullptr);
+#if JUCE_LINUX
+            adapter->setRemoteAccessHandler(nullptr);
+#endif
         }
 
         mAudioSettings = nullptr;
+
+#if JUCE_LINUX
+        // Stops the VNC server.
+        mRemoteAccess = nullptr;
+#endif
 
         // JUCE asserts if a kiosk component leaves the desktop still in kiosk mode (iOS, or
         // --kiosk on a desktop).
@@ -582,6 +607,17 @@ class MainWindow : public juce::DocumentWindow
 
     // The profile folder is the adapter's user data path (PluginProcessorAdapter::GetUserDataPath),
     // read here directly so the curtain can be sized before the adapter exists.
+#if JUCE_LINUX
+    static juce::File getRemoteAccessFolder()
+    {
+        return soundshed::profileFolder()
+            .getChildFile("data")
+            .getChildFile("v1")
+            .getChildFile("settings")
+            .getChildFile("remote-access");
+    }
+#endif
+
     static juce::File getWindowStateFile()
     {
         return soundshed::profileFolder()
@@ -687,6 +723,10 @@ class MainWindow : public juce::DocumentWindow
 
     // After the holder, so it goes first: it listens to the holder's device manager.
     std::unique_ptr<StandaloneAudioSettings> mAudioSettings;
+
+#if JUCE_LINUX
+    std::unique_ptr<StandaloneRemoteAccess> mRemoteAccess;
+#endif
 
 #if !SOUNDSHED_MOBILE
     std::unique_ptr<LaunchCurtain> mLaunchCurtain;
