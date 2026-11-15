@@ -20,6 +20,12 @@
 #                   (default: linux-dist-arm64/opt/Soundshed/soundshed-guitar/soundshed-guitar
 #                    next to this script)
 #   SOUNDSHED_VT    Virtual terminal to use (default: 7)
+#   SOUNDSHED_AUDIO_PRIO
+#                   Realtime priority of the app's audio thread, 1 to 95 (default: 70)
+#
+# Starting also sets the CPU governor to "performance". Left to save power, the Pi slows its
+# clock when the load is low and is then late with an audio block now and then. It stays
+# that way until the next reboot.
 #
 # Run it as your normal user, not with sudo: the script calls sudo itself.
 
@@ -28,6 +34,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT="soundshed-kiosk-test"
 VT="${SOUNDSHED_VT:-7}"
+AUDIO_PRIO="${SOUNDSHED_AUDIO_PRIO:-70}"
 APP="${SOUNDSHED_APP:-${SCRIPT_DIR}/linux-dist-arm64/opt/Soundshed/soundshed-guitar/soundshed-guitar}"
 # labwc settings for this session only: no title bar on the app, and it fills the screen.
 LABWC_CONFIG_DIR="${SCRIPT_DIR}/tools/pi-kiosk/labwc"
@@ -62,6 +69,19 @@ start() {
     local app_cmd
     app_cmd="$(printf '%q ' "$APP" --kiosk "$@")"
 
+    if [[ ! "$AUDIO_PRIO" =~ ^[0-9]+$ || "$AUDIO_PRIO" -lt 1 || "$AUDIO_PRIO" -gt 95 ]]; then
+        echo "SOUNDSHED_AUDIO_PRIO must be a number from 1 to 95 (received: '${AUDIO_PRIO}')." >&2
+        exit 1
+    fi
+
+    # Full clock speed, for audio without dropouts. Not every machine has the control.
+    local governor
+    for governor in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        if [[ -e "$governor" ]]; then
+            echo performance | sudo tee "$governor" >/dev/null || true
+        fi
+    done
+
     # A failed earlier run can leave the unit name taken.
     sudo systemctl reset-failed "$UNIT" 2>/dev/null || true
 
@@ -74,6 +94,7 @@ start() {
         -p StandardOutput=journal \
         -p StandardError=journal \
         -p LimitRTPRIO=95 \
+        -p Environment="SOUNDSHED_AUDIO_PRIO=${AUDIO_PRIO}" \
         -p LimitMEMLOCK=infinity \
         "$(command -v labwc)" -C "$LABWC_CONFIG_DIR" -s "$app_cmd"
 

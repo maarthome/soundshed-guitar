@@ -21,6 +21,7 @@
 #endif
 
 #include "ControllerMidiOutput.h"
+#include "dsp/RealtimeParallel.h"
 #include "resources/PluginPathUtils.h"
 
 // Same include order as Main.cpp: the standalone window header expects the audio and GUI
@@ -161,6 +162,31 @@ bool shouldUseHeadlessLv2ManifestEditor(const PluginProcessorAdapter& processor)
            std::getenv("WAYLAND_DISPLAY") == nullptr;
 }
 #endif
+
+#if JUCE_LINUX
+/// Gives the standalone app's audio thread realtime scheduling, the first time it runs a block.
+///
+/// JUCE's ALSA device starts the thread that calls processBlock as an ordinary one, so it takes
+/// its turn with everything else on the machine: the web view painting, a VNC server compressing
+/// the screen. With a small buffer (64 frames is 1.3 ms) it is then a little late now and then,
+/// and each time is a dropout, on a machine that is mostly idle. SCHED_FIFO puts it ahead of all
+/// of that. The priority is SOUNDSHED_AUDIO_PRIO, as for the DSP helper threads, which have to
+/// sit at the audio thread's level. It needs an rtprio limit (run_pi_kiosk.sh gives one, as does
+/// the audio group on most distributions); without it the call fails and nothing changes.
+///
+/// Once per thread, so a device that is reopened, which starts a new thread, is covered.
+void raiseStandaloneAudioThreadPriorityOnce() noexcept
+{
+    static thread_local bool raised = false;
+
+    if (!raised)
+    {
+        raised = true;
+        guitarfx::rtparallel::RaisePriorityOfThisThreadForAudio();
+    }
+}
+#endif
+
 } // namespace
 
 // ════════════════════════════════════════════════════════════════════════
@@ -445,6 +471,13 @@ void PluginProcessorAdapter::processBlock(juce::AudioBuffer<float>& buffer, juce
     juce::ScopedNoDenormals noDenormals;
 #if JUCE_ANDROID
     mAudioThreadPlacement.beginBlock();
+#endif
+#if JUCE_LINUX
+    // Only the standalone app owns the thread this runs on. In a host it is the host's.
+    if (wrapperType == wrapperType_Standalone)
+    {
+        raiseStandaloneAudioThreadPriorityOnce();
+    }
 #endif
 
     // The play head may only be asked here, on the audio thread; the controller reads tempo

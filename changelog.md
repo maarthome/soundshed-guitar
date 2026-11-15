@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+* **Fewer audio dropouts on Linux (standalone)**: the app now gives its audio thread realtime priority, so it no longer waits its turn behind screen drawing or screen sharing. With a small buffer that waiting caused dropouts even on a mostly idle machine. `run_pi_kiosk.sh` grants the permission, sets the priority (`SOUNDSHED_AUDIO_PRIO`, default 70) and switches the CPU to its `performance` governor at every start.
 * **Interface zoom fixed at 100%**: the Zoom control is gone from the footer bar and the OPTIONS sheet, and the interface always draws at 100%, whatever zoom was saved before. On a small full-screen panel the layout is chosen from the screen's size, and a zoom on top of that picked the wrong one.
 * **Reset the dropout count**: pressing the XRUNS figure on the footer bar sets it back to 0, so you can count dropouts from a moment you choose (after changing the buffer size, say).
 * **System load on the footer bar (Linux standalone)**: the middle of the bottom bar shows the processor load (all cores, averaged over 5 seconds), the processor temperature and the audio dropouts (xruns), updated every second. A figure turns red when the processor is busy (85% and up) or hot (75 °C and up), and the dropout count for a few seconds after a new one. Useful on a Raspberry Pi for seeing why audio crackles. On the full-size bar the readout gives way when the bar is short of room: it stacks into two rows, and steps off the bar when its controls would otherwise run into each other.
