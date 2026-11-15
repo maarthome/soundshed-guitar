@@ -286,6 +286,7 @@
     "modelLoaded",
     "navigateToToneSharingDeepLink",
     "nodeResourceBrowseCancelled",
+    "openSettings",
     "outputMutedChanged",
     "practiceToolFileLoaded",
     "practiceToolPlaybackEnded",

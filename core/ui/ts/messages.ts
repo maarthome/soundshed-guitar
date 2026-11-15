@@ -36,6 +36,7 @@ import { onTunerLiveModeChanged, onTunerReferenceChanged, onTunerStarted, onTune
 import { onRemoteAccessState } from "./settings/remoteAccess.js";
 import { onSystemStats } from "./systemStats.js";
 import type { MessageHandler } from "./messages/types.js";
+import { onOpenSettings } from "./navigation.js";
 import { onWindowChromeState } from "./windowChrome.js";
 
 export { handleMixerStateMessage } from "./messages/mixerHandlers.js";
@@ -137,6 +138,7 @@ const MESSAGE_HANDLERS: Record<string, MessageHandler> = {
   "midiLearnCapture": onMidiLearnCapture,
   "theme": onTheme,
   "windowChromeState": onWindowChromeState,
+  "openSettings": onOpenSettings,
   "tunerUpdate": onTunerUpdate,
   "tunerStarted": onTunerStarted,
   "scaleGuideCatalog": onScaleGuideCatalog,

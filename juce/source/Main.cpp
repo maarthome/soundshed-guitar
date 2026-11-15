@@ -15,6 +15,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #if JUCE_ANDROID
+    #include "AndroidUsbAudioPath.h"
+
     #include <sys/system_properties.h>
 
     #include <optional>
@@ -395,6 +397,24 @@ class MainWindow : public juce::DocumentWindow
         // microphone permission, and any later reopen.
         mPluginHolder->deviceManager.addChangeListener(this);
         applyAndroidBufferSize(*mPluginHolder);
+
+        // A USB interface that AAudio's MMAP path mangles came or went (AndroidUsbAudioPath):
+        // reopen the device so its streams take the path now allowed. If it was ruled out
+        // before this window existed, a device the holder already opened is reopened now.
+        soundshed::android_audio::SetUsbAudioPathHandler(
+            [safe = juce::Component::SafePointer<MainWindow>(this)] {
+                juce::MessageManager::callAsync([safe] {
+                    if (safe != nullptr)
+                    {
+                        safe->reopenAudioDevice();
+                    }
+                });
+            });
+
+        if (!soundshed::android_audio::UsbMMapAllowed())
+        {
+            reopenAudioDevice();
+        }
 #endif
 
 #if !SOUNDSHED_MOBILE
@@ -474,6 +494,7 @@ class MainWindow : public juce::DocumentWindow
         }
 
 #if JUCE_ANDROID
+        soundshed::android_audio::SetUsbAudioPathHandler({});
 
         if (mPluginHolder != nullptr)
         {
@@ -548,6 +569,21 @@ class MainWindow : public juce::DocumentWindow
 
   private:
 #if JUCE_ANDROID
+    // Closes and reopens the open device as it was set up, so its streams are opened again under
+    // AAudio's current MMAP policy.
+    void reopenAudioDevice()
+    {
+        if (mPluginHolder == nullptr || mPluginHolder->deviceManager.getCurrentAudioDevice() == nullptr)
+        {
+            return;
+        }
+
+        juce::Logger::writeToLog(juce::String("[audio] reopening the device: USB MMAP path ") +
+                                 (soundshed::android_audio::UsbMMapAllowed() ? "allowed" : "off"));
+        mPluginHolder->deviceManager.closeAudioDevice();
+        mPluginHolder->deviceManager.restartLastAudioDevice();
+    }
+
     void changeListenerCallback(juce::ChangeBroadcaster*) override
     {
         // Also fires for MIDI device changes and for the open that happened
@@ -836,10 +872,17 @@ class SoundshedGuitarApplication : public juce::JUCEApplication
 #else
         mMainWindow = std::make_unique<MainWindow>(getApplicationName(), createPluginHolder());
 #endif
+
+#if JUCE_MAC
+        installAppMenu();
+#endif
     }
 
     void shutdown() override
     {
+#if JUCE_MAC
+        juce::MenuBarModel::setMacMainMenu(nullptr);
+#endif
         mMainWindow = nullptr;
         mAppProperties.saveIfNeeded();
     }
@@ -901,7 +944,95 @@ class SoundshedGuitarApplication : public juce::JUCEApplication
         }
     }
 
+#if JUCE_MAC
+    void getAllCommands(juce::Array<juce::CommandID>& commands) override
+    {
+        juce::JUCEApplication::getAllCommands(commands);
+        commands.add(openSettingsCommand);
+    }
+
+    void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
+    {
+        if (commandID == openSettingsCommand)
+        {
+            result.setInfo("Settings" + juce::String::charToString(0x2026), "Open Settings", "Application", 0);
+            result.addDefaultKeypress(',', juce::ModifierKeys::commandModifier);
+            return;
+        }
+
+        juce::JUCEApplication::getCommandInfo(commandID, result);
+    }
+
+    bool perform(const InvocationInfo& info) override
+    {
+        if (info.commandID == openSettingsCommand)
+        {
+            openSettings();
+            return true;
+        }
+
+        return juce::JUCEApplication::perform(info);
+    }
+#endif
+
   private:
+#if JUCE_MAC
+    static constexpr juce::CommandID openSettingsCommand = 0x5e7701;
+
+    // Only the app menu: no top-level menus of its own.
+    struct AppMenuModel : juce::MenuBarModel
+    {
+        juce::StringArray getMenuBarNames() override
+        {
+            return {};
+        }
+
+        juce::PopupMenu getMenuForIndex(int, const juce::String&) override
+        {
+            return {};
+        }
+
+        void menuItemSelected(int, int) override
+        {
+        }
+    };
+
+    // "Settings…" (⌘,) in the app menu, as every macOS app has. The menu takes its key
+    // equivalent from the command manager's mapping, and invokes the command through it.
+    void installAppMenu()
+    {
+        mCommandManager.registerAllCommandsForTarget(this);
+        mCommandManager.setFirstCommandTarget(this);
+
+        juce::PopupMenu appMenuItems;
+        appMenuItems.addCommandItem(&mCommandManager, openSettingsCommand);
+        juce::MenuBarModel::setMacMainMenu(&mAppMenuModel, &appMenuItems);
+    }
+
+    void openSettings()
+    {
+        if (mMainWindow == nullptr)
+        {
+            return;
+        }
+
+        if (mMainWindow->isMinimised())
+        {
+            mMainWindow->setMinimised(false);
+        }
+
+        mMainWindow->toFront(true);
+
+        if (auto* editor = dynamic_cast<soundshed::editor::SoundshedEditorBase*>(mMainWindow->getContentComponent()))
+        {
+            editor->openSettings();
+        }
+    }
+
+    juce::ApplicationCommandManager mCommandManager;
+    AppMenuModel mAppMenuModel;
+#endif
+
     std::unique_ptr<juce::StandalonePluginHolder> createPluginHolder()
     {
         constexpr auto autoOpenMidiDevices =
