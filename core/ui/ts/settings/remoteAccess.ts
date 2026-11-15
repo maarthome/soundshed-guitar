@@ -138,9 +138,9 @@ export function remoteAccessStatus(state: RemoteAccessState): string {
 /** The addresses to type into a browser. */
 export function remoteAccessWebAddresses(state: RemoteAccessState): string {
   if (state.addresses.length === 0) {
-    return `http://<this device's network address>:${state.webPort}`;
+    return `https://<this device's network address>:${state.webPort}`;
   }
-  return state.addresses.map((address) => `http://${address}:${state.webPort}`).join(" or ");
+  return state.addresses.map((address) => `https://${address}:${state.webPort}`).join(" or ");
 }
 
 /** The line under the browser switch. */
@@ -150,7 +150,7 @@ export function remoteAccessWebStatus(state: RemoteAccessState): string {
   }
   if (state.webEnabled && state.webRunning) {
     const user = state.username ? `user name "${state.username}" and ` : "";
-    return `On. Open ${remoteAccessWebAddresses(state)} in a web browser and sign in with ${user}the password above.`;
+    return `On. Open ${remoteAccessWebAddresses(state)} in a web browser (https, not http), choose to continue past the certificate warning, and sign in with ${user}the password above.`;
   }
   if (state.webEnabled && !state.enabled) {
     return "On, and starts when remote access is turned on.";
@@ -158,7 +158,7 @@ export function remoteAccessWebStatus(state: RemoteAccessState): string {
   if (state.webEnabled) {
     return "Turned on, but not running. Turn it off and on again to retry.";
   }
-  return "Off. Lets a web browser show and operate this screen, with no viewer to install. The password is protected when signing in; the picture and what you click and type are not encrypted on the way, so use it on your own network only.";
+  return "Off. Lets a web browser show and operate this screen, with no viewer to install. The connection is encrypted with this device's own certificate, which a browser warns about the first time.";
 }
 
 /** The same rule the engine applies (StandaloneRemoteAccess::passwordProblem); empty when the password will do. */

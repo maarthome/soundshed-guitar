@@ -81,14 +81,14 @@ describe("remote access settings", () => {
   });
 
   it("describes browser access under its switch", () => {
-    expect(remoteAccessWebAddresses(state())).toBe("http://192.168.1.20:6080");
-    expect(remoteAccessWebAddresses(state({ addresses: ["10.0.0.2", "192.168.1.20"] }))).toBe("http://10.0.0.2:6080 or http://192.168.1.20:6080");
+    expect(remoteAccessWebAddresses(state())).toBe("https://192.168.1.20:6080");
+    expect(remoteAccessWebAddresses(state({ addresses: ["10.0.0.2", "192.168.1.20"] }))).toBe("https://10.0.0.2:6080 or https://192.168.1.20:6080");
     expect(remoteAccessWebStatus(state())).toMatch(/^Off\. /);
     expect(remoteAccessWebStatus(state({ webCanRun: false, webProblem: "Install novnc" }))).toBe("Install novnc");
     expect(remoteAccessWebStatus(state({ webEnabled: true }))).toBe("On, and starts when remote access is turned on.");
     expect(remoteAccessWebStatus(state({ enabled: true, running: true, webEnabled: true }))).toContain("not running");
     expect(remoteAccessWebStatus(state({ enabled: true, running: true, webEnabled: true, webRunning: true }))).toBe(
-      'On. Open http://192.168.1.20:6080 in a web browser and sign in with user name "soundshed" and the password above.',
+      'On. Open https://192.168.1.20:6080 in a web browser (https, not http), choose to continue past the certificate warning, and sign in with user name "soundshed" and the password above.',
     );
   });
 

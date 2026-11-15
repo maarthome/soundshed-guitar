@@ -27,12 +27,13 @@
  * use the certificate, RealVNC Viewer the RSA key.
  *
  * Browser access is a second switch on top of that, for when installing a viewer is
- * not wanted: websockify serves noVNC (a VNC viewer that is a web page) on kWebPort and
- * relays it to a second wayvnc that listens on this device only. A browser cannot do the
- * encrypted sign-ins above, so that second server takes Apple's Diffie-Hellman sign-in
- * instead, which noVNC speaks: the same user name and password, still protected, but the
- * picture and the input that follow are not. That is the trade the switch makes, and why
- * it is separate, off by default, and leaves the server viewers use as strict as it was.
+ * not wanted: websockify serves noVNC (a VNC viewer that is a web page) over HTTPS on
+ * kWebPort, with the same certificate, and relays it to a second wayvnc that listens on
+ * this device only. A browser cannot do the encrypted sign-ins above inside the VNC
+ * connection, so that second server takes Apple's Diffie-Hellman sign-in instead, which
+ * noVNC speaks, with the same user name and password. HTTPS is what encrypts the session,
+ * and noVNC needs it anyway: a browser only lets a page use its cryptography on a secure
+ * connection. The server viewers use is left as strict as it was.
  *
  * Everything lives in <profile>/data/v1/settings/remote-access/, readable by the user
  * only: settings.json (the switches and the password), wayvnc's config (which has to
@@ -54,7 +55,7 @@ class StandaloneRemoteAccess final : private juce::Timer
     /// The user name a viewer signs in with. Fixed, so the password is the only thing to set.
     static constexpr const char* kUserName = "soundshed";
     static constexpr int kPort = 5900;
-    /// Where a browser finds the noVNC page.
+    /// Where a browser finds the noVNC page, over HTTPS.
     static constexpr int kWebPort = 6080;
     /// The VNC server behind that page. Reachable from this device only.
     static constexpr int kWebServerPort = 5901;

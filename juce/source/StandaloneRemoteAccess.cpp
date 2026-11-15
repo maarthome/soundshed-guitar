@@ -474,6 +474,13 @@ juce::String StandaloneRemoteAccess::startWebProxy()
         return "Browser access needs an RSA key. Install openssh-client, then turn remote access off and on.";
     }
 
+    // The page has to come over HTTPS: a browser only gives a page its cryptography, which
+    // noVNC signs in with, on a secure connection. It also encrypts the whole session.
+    if (!tlsKeyFile().existsAsFile() || !tlsCertificateFile().existsAsFile())
+    {
+        return "Browser access needs a certificate. Install openssl, then turn remote access off and on.";
+    }
+
     if (!writeWebServerConfig())
     {
         return "Could not write " + webServerConfigFile().getFullPathName();
@@ -521,7 +528,7 @@ juce::String StandaloneRemoteAccess::startWebProxy()
     juce::StringArray proxyCommand;
     proxyCommand.add("/bin/sh");
     proxyCommand.add("-c");
-    proxyCommand.add(R"(echo $$ >"$5"; exec "$1" --web "$2" "$3" "$4" >"$6" 2>&1)");
+    proxyCommand.add(R"(echo $$ >"$5"; exec "$1" --web "$2" --cert "$7" --key "$8" --ssl-only "$3" "$4" >"$6" 2>&1)");
     proxyCommand.add("soundshed-remote-access");
     proxyCommand.add(findProgram("websockify"));
     proxyCommand.add(webFolder().getFullPathName());
@@ -529,6 +536,8 @@ juce::String StandaloneRemoteAccess::startWebProxy()
     proxyCommand.add("127.0.0.1:" + juce::String(kWebServerPort));
     proxyCommand.add(webPidFile().getFullPathName());
     proxyCommand.add(webLogFile().getFullPathName());
+    proxyCommand.add(tlsCertificateFile().getFullPathName());
+    proxyCommand.add(tlsKeyFile().getFullPathName());
 
     auto proxy = std::make_unique<juce::ChildProcess>();
 
@@ -763,7 +772,8 @@ bool StandaloneRemoteAccess::writeWebServerConfig() const
     //  - has no TLS certificate, since a server that has one offers VeNCrypt first, which
     //    noVNC accepts and then cannot complete;
     //  - allows Apple's Diffie-Hellman sign-in (relax_encryption), which noVNC speaks. That
-    //    protects the user name and password, and nothing after them.
+    //    protects the user name and password and nothing after them, which is why the
+    //    relay to the browser is HTTPS (startWebProxy): it encrypts the rest.
     juce::StringArray lines;
     lines.add("use_relative_paths=true");
     lines.add("address=127.0.0.1");
