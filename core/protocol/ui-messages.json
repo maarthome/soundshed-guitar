@@ -218,7 +218,8 @@
     "updateSetlist",
     "updateSignalPathNodeBypass",
     "updateSignalPathNodeConfig",
-    "updateSignalPathNodeParam"
+    "updateSignalPathNodeParam",
+    "watchSystemStats"
   ],
   "engineToUi": [
     "ampCabStateChanged",
@@ -353,6 +354,7 @@
     "sldS",
     "spatialPosition",
     "state",
+    "systemStats",
     "theme",
     "toneSharingPackDeleteFailed",
     "tunerLiveModeChanged",

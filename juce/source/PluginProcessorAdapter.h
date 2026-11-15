@@ -152,6 +152,14 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     using RemoteAccessHandler = std::function<void(const juce::var& message)>;
     void setRemoteAccessHandler(RemoteAccessHandler handler);
 
+    // ── Standalone system load ─────────────────────────────────────
+    /// Where "watchSystemStats" messages go: the processor load, temperature and audio
+    /// dropouts behind the footer's readout (StandaloneSystemStats). The standalone app's
+    /// window installs this on Linux; with none installed the message is answered
+    /// `available: false`, and the readout stays hidden. Message thread only.
+    using SystemStatsHandler = std::function<void(const juce::var& message)>;
+    void setSystemStatsHandler(SystemStatsHandler handler);
+
     // ── Accessors ──────────────────────────────────────────────────
     [[nodiscard]] guitarfx::PluginController& getController()
     {
@@ -177,6 +185,7 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     DeviceLatencyQuery mDeviceLatencyQuery;
     WindowChromeHandler mWindowChromeHandler;
     RemoteAccessHandler mRemoteAccessHandler;
+    SystemStatsHandler mSystemStatsHandler;
 
     std::filesystem::path mAssetRoot;
     std::unique_ptr<juce::FileChooser> mFileChooser;

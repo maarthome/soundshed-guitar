@@ -51,6 +51,13 @@ html[data-density="compact"] .footer-compact-tempo:not(:empty) {
   margin-left: auto;
 }
 
+/* The load readout sits between the tools and the tempo. Its auto margin and the tempo's
+   share the bar's spare room, which puts it in the middle of the gap. */
+html[data-density="compact"] .footer-system-stats {
+  gap: 8px;
+  margin-left: auto;
+}
+
 /* The history and A/B are in the sheet; their place on the full bar is empty here. */
 html[data-density="compact"] .footer-bar > .footer-chain-history {
   display: none;

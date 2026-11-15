@@ -48,6 +48,22 @@
           </svg>
         </button>
       </div>
+      <!-- The machine's load (ts/systemStats.ts): processor load, temperature and audio dropouts,
+           in the middle of the compact bar. Shown only where the standalone app can measure them. -->
+      <div class="footer-system-stats" id="footer-system-stats" role="group" aria-label="System load" hidden>
+        <span class="footer-system-stat" id="footer-system-cpu" title="Processor load, all cores, averaged over the last 5 seconds" hidden>
+          <span class="footer-system-stat-label">CPU</span>
+          <strong>0%</strong>
+        </span>
+        <span class="footer-system-stat" id="footer-system-temp" title="Processor temperature" hidden>
+          <span class="footer-system-stat-label">Temp</span>
+          <strong>0°C</strong>
+        </span>
+        <span class="footer-system-stat" id="footer-system-xruns" title="Audio dropouts (xruns) since the audio device was opened" hidden>
+          <span class="footer-system-stat-label">Xruns</span>
+          <strong>0</strong>
+        </span>
+      </div>
       <!-- Compact density: the tempo, the metronome and its play when the bar has room for them
            (ts/footerFit.ts moves them here from the tempo group, and back). -->
       <div class="footer-compact-tempo" aria-label="Tempo"></div>

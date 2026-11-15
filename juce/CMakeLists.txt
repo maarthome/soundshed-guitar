@@ -480,6 +480,8 @@ set(CommonSourceFiles
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneAudioSettingsMidi.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneRemoteAccess.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneRemoteAccess.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemStats.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemStats.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/WindowChrome.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/WindowChrome.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/editor/SoundshedEditorBase.h"

@@ -33,6 +33,7 @@ import { onPresetArchivePreviewed, onPresetArchivePreviewFailed } from "./toneSh
 import { onDspPerformance, onSld, onSldA, onSldL, onSldRoster, onSldS } from "./messages/telemetry.js";
 import { onTunerLiveModeChanged, onTunerReferenceChanged, onTunerStarted, onTunerStopped, onTunerUpdate } from "./messages/tunerHandlers.js";
 import { onRemoteAccessState } from "./settings/remoteAccess.js";
+import { onSystemStats } from "./systemStats.js";
 import type { MessageHandler } from "./messages/types.js";
 import { onWindowChromeState } from "./windowChrome.js";
 
@@ -118,6 +119,7 @@ const MESSAGE_HANDLERS: Record<string, MessageHandler> = {
   "audioDeviceState": onAudioDeviceState,
   "audioDeviceLevels": onAudioDeviceLevels,
   "remoteAccessState": onRemoteAccessState,
+  "systemStats": onSystemStats,
   "sharedSyncUpdated": onSharedSyncUpdated,
   "sharedSyncState": onSharedSyncState,
   "presetData": onPresetData,

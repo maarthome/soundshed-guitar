@@ -78,6 +78,50 @@
   gap: 4px;
 }
 
+/* The machine's load (ts/systemStats.ts): three small figures, each a quiet label and a
+   value. The values have a fixed width in tabular figures, so the bar does not shift as
+   they change and ts/footerFit.ts has a steady width to fit around. */
+.footer-system-stats {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.footer-system-stats[hidden],
+.footer-system-stat[hidden] {
+  display: none;
+}
+
+.footer-system-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.footer-system-stat-label {
+  color: var(--footer-fg);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.footer-system-stat strong {
+  min-width: 4ch;
+  color: var(--footer-fg-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* A busy or hot processor, or a dropout that just happened. */
+.footer-system-stat.is-alert strong {
+  color: var(--color-error);
+}
+
 .footer-actions-panel {
   display: flex;
   align-items: center;

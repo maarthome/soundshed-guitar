@@ -1363,6 +1363,11 @@ void PluginProcessorAdapter::setRemoteAccessHandler(RemoteAccessHandler handler)
     mRemoteAccessHandler = std::move(handler);
 }
 
+void PluginProcessorAdapter::setSystemStatsHandler(SystemStatsHandler handler)
+{
+    mSystemStatsHandler = std::move(handler);
+}
+
 void PluginProcessorAdapter::NotifyStateChanged()
 {
     updateHostDisplay(juce::AudioProcessor::ChangeDetails().withNonParameterStateChanged(true));
@@ -1538,6 +1543,21 @@ void PluginProcessorAdapter::handleWebMessage(const juce::String& message)
             {
                 // A plugin format, or a platform without it. Say so, so the UI hides the section.
                 SendMessageToUI(R"({"type":"remoteAccessState","available":false})");
+            }
+
+            return;
+        }
+
+        // The machine's load, for the footer's readout: the standalone app's business too.
+        if (obj->getProperty(typeId).toString() == "watchSystemStats")
+        {
+            if (mSystemStatsHandler)
+            {
+                mSystemStatsHandler(parsed);
+            }
+            else
+            {
+                SendMessageToUI(R"({"type":"systemStats","available":false})");
             }
 
             return;

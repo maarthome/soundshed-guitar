@@ -32,6 +32,7 @@ import { startUiSettingsTracking } from "./windowSettings.js";
 import { renderFooterDemoAudio } from "./demoAudio.js";
 import { initDensitySelect, initDiagnosticsToggle, initThemeSelect, initZoomControls, initUserInputCalibrationControls } from "./settings.js";
 import { postMessage, requestLooperState } from "./bridge.js";
+import { initSystemStats } from "./systemStats.js";
 import { initWindowChrome } from "./windowChrome.js";
 import { initializeMetronome } from "./metronome.js";
 import { initializeAutomationPanel, requestAutomationState } from "./automationPanel.js";
@@ -327,6 +328,7 @@ async function bootstrap(): Promise<void> {
   requestLooperState();
   postMessage({ type: "getEffectCatalog" });
   initWindowChrome();
+  initSystemStats();
   postMessage({ type: "getTheme" });
   requestAutomationState();
   postMessage({ type: "uiVisibility", visible: !document.hidden });

@@ -5,6 +5,7 @@
 #include "ProfileFolder.h"
 #include "StandaloneAudioSettings.h"
 #include "StandaloneRemoteAccess.h"
+#include "StandaloneSystemStats.h"
 #include "WindowChrome.h"
 #include "editor/SoundshedEditorBase.h"
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -352,6 +353,23 @@ class MainWindow : public juce::DocumentWindow
                     mRemoteAccess->handleRequest(message);
                 }
             });
+
+            // The footer's readout: processor load, temperature, and the device's dropouts.
+            StandaloneSystemStats::Sources statsSources;
+            statsSources.dropouts = [this] {
+                return mPluginHolder != nullptr ? mPluginHolder->deviceManager.getXRunCount() : -1;
+            };
+            mSystemStats =
+                std::make_unique<StandaloneSystemStats>(std::move(statsSources), [adapter](const juce::String& json) {
+                    adapter->SendMessageToUI(json.toStdString());
+                });
+
+            adapter->setSystemStatsHandler([this](const juce::var& message) {
+                if (mSystemStats != nullptr)
+                {
+                    mSystemStats->handleRequest(message);
+                }
+            });
 #endif
 
 #if !SOUNDSHED_MOBILE
@@ -435,6 +453,7 @@ class MainWindow : public juce::DocumentWindow
             adapter->setWindowChromeHandler(nullptr);
 #if JUCE_LINUX
             adapter->setRemoteAccessHandler(nullptr);
+            adapter->setSystemStatsHandler(nullptr);
 #endif
         }
 
@@ -443,6 +462,8 @@ class MainWindow : public juce::DocumentWindow
 #if JUCE_LINUX
         // Stops the VNC server.
         mRemoteAccess = nullptr;
+        // Asks the holder's device manager for its dropouts, so it goes before the holder.
+        mSystemStats = nullptr;
 #endif
 
         // JUCE asserts if a kiosk component leaves the desktop still in kiosk mode (iOS, or
@@ -726,6 +747,7 @@ class MainWindow : public juce::DocumentWindow
 
 #if JUCE_LINUX
     std::unique_ptr<StandaloneRemoteAccess> mRemoteAccess;
+    std::unique_ptr<StandaloneSystemStats> mSystemStats;
 #endif
 
 #if !SOUNDSHED_MOBILE
