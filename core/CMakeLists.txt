@@ -81,10 +81,9 @@ endfunction()
 
 function(guitarfx_get_wasmtime_bundle out_platform out_archive_ext out_static_lib)
     if(WIN32)
-        set(_guitarfx_wasmtime_arch "${CMAKE_GENERATOR_PLATFORM}")
-        if(NOT _guitarfx_wasmtime_arch)
-            set(_guitarfx_wasmtime_arch "${CMAKE_SYSTEM_PROCESSOR}")
-        endif()
+        # The generator platform, else the compiler's target. Not CMAKE_SYSTEM_PROCESSOR: under
+        # Ninja that is the host's (AMD64) even in a 32-bit MSVC environment.
+        guitarfx_detect_windows_arch(_guitarfx_wasmtime_arch)
     elseif(APPLE)
         set(_guitarfx_wasmtime_arch "${CMAKE_OSX_ARCHITECTURES}")
         if(NOT _guitarfx_wasmtime_arch)
@@ -1051,6 +1050,12 @@ endif()
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/cmake/FusedWaveNet"
                  "${CMAKE_CURRENT_BINARY_DIR}/FusedWaveNet")
 target_link_libraries(SoundshedGuitarCore PUBLIC SoundshedGuitarFusedWaveNet)
+
+# The polyphonic note detector behind Guitar to MIDI's Polyphonic mode; its own scope for the same
+# reason.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PolyNotes"
+                 "${CMAKE_CURRENT_BINARY_DIR}/PolyNotes")
+target_link_libraries(SoundshedGuitarCore PUBLIC SoundshedGuitarPolyNotes)
 
 if(DEFINED nam_oversampler_audio_dsp_tools_SOURCE_DIR)
     # A generated copy of its resampler with local fixes, not the checkout itself; see the module.
