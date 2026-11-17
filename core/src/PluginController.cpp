@@ -128,6 +128,9 @@ PluginController::~PluginController()
     // Tasks this posted to the message thread that have not run yet find it gone.
     mAliveForPostedTasks.reset();
 
+    // An instance unloaded mid-bounce no longer counts as rendering offline.
+    SetOfflineRendering(false);
+
     // Before anything else goes: a restore or program change the host stopped waiting for can
     // still be queued for the message thread, or running there.
     mHostStateRelay->Shutdown();
@@ -224,7 +227,22 @@ void PluginController::Initialize()
         std::lock_guard<std::mutex> riffLock(mRiffLibraryMutex);
         mRiffLibraryIndex = LoadRiffLibraryIndex();
     }
+    // In a DAW the project's own state usually lands straight after this; the preset picked here
+    // is built only if nothing replaces it first (see mDeferredStartupPreset).
+    mDeferStartupBuild = !mHost.IsStandalone();
     LoadLastSessionState();
+    mDeferStartupBuild = false;
+
+    if (mDeferredStartupPreset)
+    {
+        mHost.RunOnMainThread([this, alive = std::weak_ptr<const bool>(mAliveForPostedTasks)] {
+            if (!alive.expired())
+            {
+                BuildDeferredStartupPreset();
+            }
+        });
+    }
+
     ApplyInputModeSettingsFromAppSettings();
 
     // What was playing when the app started is the unsaved-changes baseline, not a preset
@@ -270,6 +288,13 @@ void PluginController::Initialize()
 
 void PluginController::Prepare(double sampleRate, int blockSize)
 {
+    // A host that prepares before its message loop has run the build task, or one with no loop
+    // to run it, gets the start-up preset now rather than an empty chain.
+    if (mDeferredStartupPreset && mHost.IsMessageThread())
+    {
+        BuildDeferredStartupPreset();
+    }
+
     bool channelCountsChanged = false;
 
     // A device or bus that now carries two channels can switch dual mono on; its second
@@ -618,6 +643,15 @@ void PluginController::OnIdle()
 
 void PluginController::DrainControlSurfaceRequests()
 {
+    // A retired chain holding a hosted plugin is freed only on this thread. OnIdle frees it while
+    // the editor is open; this frees it while it is closed, when a host's automation or program
+    // changes switch presets, and until then it can hold a sampler's hundreds of MB. One atomic
+    // load when there is nothing to free.
+    if (mPresetMixer.HasRetiredMainThreadWork())
+    {
+        mPresetMixer.CollectRetiredMainThread();
+    }
+
     // A rebuild the audio thread asked for, with the editor closed as much as open: a parameter
     // that needs one moved by automation, or a right-hand NAM model for a chain that was built
     // while its stereo input was folded to mono and has just turned stereo. One atomic load when

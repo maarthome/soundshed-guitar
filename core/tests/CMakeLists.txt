@@ -47,11 +47,13 @@ set(TEST_SOURCES
     SwapLatencyAlignmentTests.cpp
     GlobalChainEditorTests.cpp
     GlobalChainEngineTests.cpp
+    GraphicEQFlatBandTests.cpp
     GuitarToMidiEffectTests.cpp
     GuitarToMidiPolyphonicTests.cpp
     HarmonizerEffectTests.cpp
     ParamGlideTests.cpp
     SplitterRoutingTests.cpp
+    StartupPresetDeferralTests.cpp
     PresetRetirementTests.cpp
     DemoPreviewLoopTests.cpp
     HostedPluginCaptureLockTests.cpp
@@ -63,6 +65,7 @@ set(TEST_SOURCES
     IRCabAutomationRealtimeTests.cpp
     IRCabBlendCompTests.cpp
     IRCabLoneSlotTests.cpp
+    IRCabMonoInputTests.cpp
     IRCabReloadTests.cpp
     IrAlignmentTests.cpp
     IrZeroLatencyTests.cpp
@@ -132,6 +135,7 @@ set(TEST_SOURCES
     UiClientTests.cpp
     UiClientLayoutTests.cpp
     PresetStorageTests.cpp
+    PresetSummaryCacheTests.cpp
     PresetVoicePoolTests.cpp
     JsonStoreConcurrencyTests.cpp
     JsonStoreTests.cpp
@@ -153,6 +157,7 @@ set(TEST_SOURCES
     NamResamplerLatencyTests.cpp
     SampleRateConverterTests.cpp
     SceneSelectAutomationTests.cpp
+    PluginEditHostReportTests.cpp
     SetlistMidiOutTests.cpp
     StorageMigrationTests.cpp
     SignalChainMutationStressTest.cpp
@@ -316,6 +321,12 @@ foreach(test_source IN LISTS TEST_SOURCES)
         endif()
     endif()
 endforeach()
+
+# The committed Custom Effect samples, so the host test catches a sample that no longer loads.
+if(TARGET WasmEffectHostTests)
+    target_compile_definitions(WasmEffectHostTests PRIVATE
+        GUITARFX_WASM_SAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tools/wasm-samples")
+endif()
 
 # Shared harness for the riff/audio-lock regression without growing the main test past its size budget.
 target_sources(MixerInstanceLockTests PRIVATE MixerInstanceLockSupport.cpp MixerInstanceLockSupport.h)
