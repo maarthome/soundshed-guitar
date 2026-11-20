@@ -95,5 +95,14 @@
           <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.86l.03.03a2 2 0 0 1-2.83 2.83l-.03-.03A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.53V21a2 2 0 0 1-4 0v-.07a1.7 1.7 0 0 0-1-1.53 1.7 1.7 0 0 0-1.86.34l-.03.03a2 2 0 1 1-2.83-2.83l.03-.03A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.53-1H3a2 2 0 0 1 0-4h.07a1.7 1.7 0 0 0 1.53-1 1.7 1.7 0 0 0-.34-1.86l-.03-.03a2 2 0 1 1 2.83-2.83l.03-.03A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.07V3a2 2 0 0 1 4 0v.07a1.7 1.7 0 0 0 1 1.53 1.7 1.7 0 0 0 1.86-.34l.03-.03a2 2 0 1 1 2.83 2.83l-.03.03A1.7 1.7 0 0 0 19.4 9c0 .46.17.9.46 1.24.3.33.74.53 1.21.56H21a2 2 0 0 1 0 4h-.07a1.7 1.7 0 0 0-1.53 1z" stroke="currentColor" stroke-width="1.5" fill="none" />
         </svg>
       </button>
+      <!-- my_gui: the power button (ts/systemPower.ts), under the gear on the rail. Shown once the
+           standalone app on Linux says it can (systemPowerState); opens #power-modal. -->
+      <button class="icon-btn nav-power-btn" id="nav-power-btn" type="button" title="Exit" aria-label="Exit" aria-haspopup="dialog" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 3v8" />
+          <path d="M6.3 6.6a8 8 0 1 0 11.4 0" />
+        </svg>
+        <span class="nav-power-label">EXIT</span>
+      </button>
 
     </header>

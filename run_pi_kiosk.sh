@@ -65,9 +65,11 @@ start() {
         exit 1
     fi
 
-    # labwc runs its startup command through a shell, so quote every word.
+    # labwc runs its startup command through a shell, so quote every word. When the app ends
+    # (EXIT APP on the rail's power button, or a crash) labwc goes too, so the kiosk stops
+    # rather than leaving an empty screen; `labwc --exit` finds this labwc through LABWC_PID.
     local app_cmd
-    app_cmd="$(printf '%q ' "$APP" --kiosk "$@")"
+    app_cmd="$(printf '%q ' "$APP" --kiosk "$@"); labwc --exit"
 
     if [[ ! "$AUDIO_PRIO" =~ ^[0-9]+$ || "$AUDIO_PRIO" -lt 1 || "$AUDIO_PRIO" -gt 95 ]]; then
         echo "SOUNDSHED_AUDIO_PRIO must be a number from 1 to 95 (received: '${AUDIO_PRIO}')." >&2

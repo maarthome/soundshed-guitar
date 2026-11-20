@@ -1514,6 +1514,11 @@ void PluginProcessorAdapter::setAudioTuningHandler(AudioTuningHandler handler)
     mAudioTuningHandler = std::move(handler);
 }
 
+void PluginProcessorAdapter::setSystemPowerHandler(SystemPowerHandler handler)
+{
+    mSystemPowerHandler = std::move(handler);
+}
+
 bool PluginProcessorAdapter::SupportsNativeEditor() const
 {
 #if SOUNDSHED_NANOQ_UI
@@ -1766,6 +1771,21 @@ void PluginProcessorAdapter::handleWebMessage(const juce::String& message)
             else
             {
                 SendMessageToUI(R"({"type":"audioTuningState","available":false})");
+            }
+
+            return;
+        }
+
+        // The rail's power button (Exit App, Power Off): the standalone app's too.
+        if (obj->getProperty(typeId).toString() == "systemPower")
+        {
+            if (mSystemPowerHandler)
+            {
+                mSystemPowerHandler(parsed);
+            }
+            else
+            {
+                SendMessageToUI(R"({"type":"systemPowerState","available":false})");
             }
 
             return;

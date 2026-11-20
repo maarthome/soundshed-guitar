@@ -1,0 +1,112 @@
+/* my_gui: the power button under the gear and its window (ts/systemPower.ts). */
+
+/* EXIT: the power icon with its name under it, like the rail's places (CHAIN, TONES). In the
+   header it is a small outlined button beside the gear, the name beside the icon. */
+.nav-power-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px !important;
+  margin-left: 6px;
+  padding: 0 8px !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: var(--radius-md) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-secondary);
+}
+
+/* .icon-btn sets a display that would otherwise beat the hidden attribute. */
+.nav-power-btn[hidden] {
+  display: none !important;
+}
+
+.nav-power-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.nav-power-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.nav-power-btn:hover {
+  color: var(--color-error, #e05050);
+  border-color: var(--color-error, #e05050) !important;
+}
+
+html[data-density="compact"][data-compact-layout="rail"] .nav-power-btn {
+  align-self: center;
+  flex: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  width: 48px !important;
+  height: auto !important;
+  min-height: 48px !important;
+  margin: 8px 0 0;
+  padding: 4px 0 !important;
+}
+
+html[data-density="compact"][data-compact-layout="rail"] .nav-power-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+html[data-density="compact"][data-compact-layout="rail"] .nav-power-label {
+  font-size: 10px;
+}
+
+/* The window: three big buttons side by side, Cancel first. */
+.power-modal-content {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.power-modal-status {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.power-modal-error {
+  margin: 10px 0 0;
+  color: var(--color-error, #e05050);
+}
+
+.power-modal-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.power-modal-actions .power-modal-btn {
+  min-height: 56px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.power-modal-actions .power-modal-btn[hidden] {
+  display: none;
+}
+
+.power-modal-actions .power-modal-btn:disabled {
+  opacity: 0.45;
+}
+
+/* Switching the computer off is the one to be sure of: red, whatever the theme's buttons are. */
+#power-modal #power-modal-poweroff {
+  background: #c62f2f;
+  border-color: #c62f2f;
+  color: #fff;
+}
+
+#power-modal #power-modal-poweroff:hover:not(:disabled) {
+  background: #d93a3a;
+  border-color: #d93a3a;
+}

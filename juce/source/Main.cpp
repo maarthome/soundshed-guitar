@@ -5,6 +5,7 @@
 #include "ProfileFolder.h"
 #include "StandaloneAudioSettings.h"
 #include "StandaloneAudioTuning.h"
+#include "StandaloneSystemPower.h"
 #include "StandaloneRemoteAccess.h"
 #include "StandaloneSystemStats.h"
 #include "WindowChrome.h"
@@ -401,6 +402,40 @@ class MainWindow : public juce::DocumentWindow
                     mAudioTuning->handleRequest(message);
                 }
             });
+
+            // The rail's power button: Exit App, or Power Off the computer (StandaloneSystemPower).
+            StandaloneSystemPower::Hooks powerHooks;
+            powerHooks.saveState = [this] {
+                saveWindowState();
+
+                if (mPluginHolder != nullptr)
+                {
+                    mPluginHolder->savePluginState();
+
+                    // What quitting would write to disk at the end, written now.
+                    if (auto* file = dynamic_cast<juce::PropertiesFile*>(mPluginHolder->settings.get()))
+                    {
+                        file->saveIfNeeded();
+                    }
+                }
+            };
+            powerHooks.quitApp = [window = juce::Component::SafePointer<MainWindow>(this)] {
+                if (window != nullptr)
+                {
+                    window->closeButtonPressed();
+                }
+            };
+            mSystemPower =
+                std::make_unique<StandaloneSystemPower>(std::move(powerHooks), [adapter](const juce::String& json) {
+                    adapter->SendMessageToUI(json.toStdString());
+                });
+
+            adapter->setSystemPowerHandler([this](const juce::var& message) {
+                if (mSystemPower != nullptr)
+                {
+                    mSystemPower->handleRequest(message);
+                }
+            });
 #endif
 
 #if !SOUNDSHED_MOBILE
@@ -516,6 +551,7 @@ class MainWindow : public juce::DocumentWindow
             adapter->setRemoteAccessHandler(nullptr);
             adapter->setSystemStatsHandler(nullptr);
             adapter->setAudioTuningHandler(nullptr);
+            adapter->setSystemPowerHandler(nullptr);
 #endif
             adapter->setEditorSwitchHandler(nullptr);
         }
@@ -529,6 +565,8 @@ class MainWindow : public juce::DocumentWindow
         mSystemStats = nullptr;
         // Reopens the holder's device, so it goes before the holder too.
         mAudioTuning = nullptr;
+        // Saves through the holder.
+        mSystemPower = nullptr;
 #endif
 
         // JUCE asserts if a kiosk component leaves the desktop still in kiosk mode (iOS, or
@@ -874,6 +912,7 @@ class MainWindow : public juce::DocumentWindow
     std::unique_ptr<StandaloneRemoteAccess> mRemoteAccess;
     std::unique_ptr<StandaloneSystemStats> mSystemStats;
     std::unique_ptr<StandaloneAudioTuning> mAudioTuning;
+    std::unique_ptr<StandaloneSystemPower> mSystemPower;
 #endif
 
 #if !SOUNDSHED_MOBILE

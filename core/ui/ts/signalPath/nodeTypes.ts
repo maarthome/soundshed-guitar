@@ -160,7 +160,8 @@ async function handleNamIrFileDrop(file: File, nodeId: string, resourceIndex?: n
 /** The effect group that colours the node's box (ts/effectGroups.ts): a hosted plugin's from its own kind. */
 export function getNodeEffectGroup(node: GraphNode): EffectGroupId {
   if (node.type === EffectGuids.kPluginHost) {
-    const category = getPluginCategoryForNode(node.id);
+    // Kept in the node's config when the plugin loads (and so with the preset); else as reported.
+    const category = node.config?.pluginCategory || getPluginCategoryForNode(node.id);
     return category ? effectGroupForPluginCategory(category) : "utility";
   }
   return effectGroupForBuiltIn(getNodeCategory(node), getNodeEffectInfo(node)?.displayName ?? "");

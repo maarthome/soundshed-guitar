@@ -37,6 +37,7 @@ import { onTunerLiveModeChanged, onTunerReferenceChanged, onTunerStarted, onTune
 import { onAudioTuningState, refreshAudioTuningSoon } from "./settings/audioTuning.js";
 import { onRemoteAccessState } from "./settings/remoteAccess.js";
 import { onSystemStats } from "./systemStats.js";
+import { onSystemPowerState } from "./systemPower.js";
 import type { MessageHandler } from "./messages/types.js";
 import { onOpenSettings } from "./navigation.js";
 import { onWindowChromeState } from "./windowChrome.js";
@@ -131,6 +132,7 @@ const MESSAGE_HANDLERS: Record<string, MessageHandler> = {
   "audioTuningState": onAudioTuningState,
   "remoteAccessState": onRemoteAccessState,
   "systemStats": onSystemStats,
+  "systemPowerState": onSystemPowerState,
   "sharedSyncUpdated": onSharedSyncUpdated,
   "sharedSyncState": onSharedSyncState,
   "presetData": onPresetData,

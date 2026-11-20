@@ -34,6 +34,7 @@ import { initDensitySelect, initDiagnosticsToggle, initZoomControls, initUserInp
 import { initThemeFlyout } from "./themeFlyout.js";
 import { postMessage, requestLooperState } from "./bridge.js";
 import { initSystemStats } from "./systemStats.js";
+import { initSystemPower } from "./systemPower.js";
 import { initWindowChrome } from "./windowChrome.js";
 import { initializeMetronome } from "./metronome.js";
 import { initializeAutomationPanel, requestAutomationState } from "./automationPanel.js";
@@ -336,6 +337,7 @@ async function bootstrap(): Promise<void> {
   postMessage({ type: "getEffectCatalog" });
   initWindowChrome();
   initSystemStats();
+  initSystemPower();
   postMessage({ type: "getTheme" });
   requestAutomationState();
   postMessage({ type: "uiVisibility", visible: !document.hidden });

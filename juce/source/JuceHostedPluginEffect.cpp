@@ -1656,6 +1656,13 @@ bool JuceHostedPluginEffect::LoadPluginFromPath(const std::filesystem::path& pat
         {
             mRuntimeConfigChangedCallback(kPluginStableIdConfigKey, pluginStableId);
         }
+
+        // The plugin's kind (LV2 class label, VST3 sub-categories) in the node's config, kept with
+        // the preset, so the UI can colour the node by its effect group as soon as a preset loads.
+        if (const std::string pluginCategory = FromJuceString(mPluginDescription.category); !pluginCategory.empty())
+        {
+            mRuntimeConfigChangedCallback("pluginCategory", pluginCategory);
+        }
     }
 
     AppendHostedPluginTrace("LoadPluginFromPath instantiated name=" + FromJuceString(mPluginDescription.name) +

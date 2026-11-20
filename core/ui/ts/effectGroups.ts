@@ -5,9 +5,10 @@
  * built-in effects and hosted LV2/VST3 plugins share one set of colours.
  *
  * A built-in effect's group comes from its category, refined by name (Noise Gate is Noise
- * Reduction, Wah is Filter, ...). A hosted plugin's comes from the plugin itself: the engine
- * reports its LV2 class label or VST3 sub-categories with hostedPluginResourceLoadCompleted
- * (pluginCategory), which notePluginCategory keeps per node. A chain box's group is
+ * Reduction, Wah is Filter, ...). A hosted plugin's comes from the plugin itself, its LV2 class
+ * label or VST3 sub-categories: the hosted plugin effect puts it in the node's config
+ * (`pluginCategory`) each time it loads, so it is kept with the preset, and it also comes with
+ * hostedPluginResourceLoadCompleted when a plugin is chosen (notePluginCategory). A chain box's group is
  * getNodeEffectGroup (signalPath/nodeTypes.ts).
  *
  * The choice is the app setting `ui.effectGroupColors`: {mode, strength, colors}. Default mode

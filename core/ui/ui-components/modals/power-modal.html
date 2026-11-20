@@ -1,0 +1,18 @@
+<!-- my_gui: the rail's power button (ts/systemPower.ts). Big buttons for a finger: Cancel,
+     POWER OFF the computer, or EXIT APP. -->
+<div id="power-modal" class="modal power-modal" style="display: none;">
+      <div class="modal-content power-modal-content" role="dialog" aria-modal="true" aria-labelledby="power-modal-title">
+        <div class="modal-header">
+          <h3 id="power-modal-title">Exit</h3>
+        </div>
+        <div class="modal-body">
+          <p class="power-modal-status" id="power-modal-status" aria-live="polite">Switch the computer off, or close Soundshed Guitar.</p>
+          <p class="power-modal-error" id="power-modal-error" role="alert" hidden></p>
+        </div>
+        <div class="modal-footer power-modal-actions">
+          <button class="secondary power-modal-btn" id="power-modal-cancel" type="button">Cancel</button>
+          <button class="btn-danger power-modal-btn" id="power-modal-poweroff" type="button">POWER OFF</button>
+          <button class="power-modal-btn" id="power-modal-exit" type="button">EXIT APP</button>
+        </div>
+      </div>
+    </div>

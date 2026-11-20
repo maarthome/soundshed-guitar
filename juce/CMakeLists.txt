@@ -516,6 +516,8 @@ set(CommonSourceFiles
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemStats.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneAudioTuning.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneAudioTuning.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemPower.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/StandaloneSystemPower.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/WindowChrome.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/WindowChrome.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/editor/SoundshedEditorBase.h"

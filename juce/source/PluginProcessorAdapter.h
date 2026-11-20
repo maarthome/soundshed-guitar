@@ -172,6 +172,14 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     using AudioTuningHandler = std::function<void(const juce::var& message)>;
     void setAudioTuningHandler(AudioTuningHandler handler);
 
+    // ── Standalone power button ────────────────────────────────────
+    /// Where "systemPower" messages go: the rail's power button, Exit App or Power Off
+    /// (StandaloneSystemPower). The standalone app's window installs this on Linux; with none
+    /// installed the message is answered `available: false`, and the button stays hidden.
+    /// Message thread only.
+    using SystemPowerHandler = std::function<void(const juce::var& message)>;
+    void setSystemPowerHandler(SystemPowerHandler handler);
+
     // ── Editor switch (experimental) ───────────────────────────────
     /// True when the next editor should be the native UI: built in (SupportsNativeEditor), and
     /// either the only one this copy may use (NativeEditorOnly) or chosen in Settings
@@ -216,6 +224,7 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     RemoteAccessHandler mRemoteAccessHandler;
     SystemStatsHandler mSystemStatsHandler;
     AudioTuningHandler mAudioTuningHandler;
+    SystemPowerHandler mSystemPowerHandler;
     EditorSwitchHandler mEditorSwitchHandler;
 
     std::filesystem::path mAssetRoot;
