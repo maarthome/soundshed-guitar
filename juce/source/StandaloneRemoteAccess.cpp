@@ -1,4 +1,5 @@
 #include "StandaloneRemoteAccess.h"
+#include "RemoteAccessViewerPage.h"
 
 #if JUCE_LINUX
 
@@ -16,8 +17,9 @@ constexpr int kGracefulExitMs = 1500;
 constexpr int kEarlyExitMs = 400;
 /// Where Debian's noVNC package puts the viewer page and its scripts.
 constexpr const char* kDefaultNoVncFolder = "/usr/share/novnc";
-/// What the front page sends a browser on to: connect at once, fit the window, and come back after a drop.
-constexpr const char* kNoVncPage = "vnc.html?autoconnect=true&resize=scale&reconnect=true";
+/// What the front page sends a browser on to: our own viewer (RemoteAccessViewerPage.h), which
+/// logs in with the user name too, fits the window, and comes back after a drop.
+constexpr const char* kViewerPage = "soundshed.html";
 
 juce::String environmentVariable(const char* name)
 {
@@ -623,29 +625,32 @@ bool StandaloneRemoteAccess::prepareWebFolder() const
 
     for (const auto& entry : noVncFolder().findChildFiles(juce::File::findFilesAndDirectories, false))
     {
-        // The front page is ours.
-        if (entry.getFileName() != "index.html")
+        // The front page and the viewer are ours.
+        if (entry.getFileName() != "index.html" && entry.getFileName() != kViewerPage)
         {
             entry.createSymbolicLink(folder.getChildFile(entry.getFileName()), true);
         }
     }
 
-    const juce::String page(kNoVncPage);
-    const auto escapedPage = page.replace("&", "&amp;");
+    const juce::String page(kViewerPage);
 
+    // The front page passes on whatever the address carries (?password=...), which a plain
+    // refresh would drop; the refresh is there for a browser without scripts.
     juce::StringArray html;
     html.add("<!DOCTYPE html>");
     html.add("<html lang=\"en\">");
     html.add("<head>");
     html.add("<meta charset=\"utf-8\">");
     html.add("<title>Soundshed Guitar</title>");
-    html.add("<meta http-equiv=\"refresh\" content=\"0; url=" + escapedPage + "\">");
+    html.add("<script>location.replace(\"" + page + "\" + location.search + location.hash);</script>");
+    html.add("<meta http-equiv=\"refresh\" content=\"1; url=" + page + "\">");
     html.add("</head>");
-    html.add("<body><a href=\"" + escapedPage + "\">Open Soundshed Guitar</a></body>");
+    html.add("<body><a href=\"" + page + "\">Open Soundshed Guitar</a></body>");
     html.add("</html>");
 
     return folder.getChildFile("index.html").replaceWithText(html.joinIntoString("\n") + "\n", false, false, "\n") &&
-           folder.getChildFile("vnc.html").exists();
+           folder.getChildFile(kViewerPage).replaceWithText(kRemoteAccessViewerPage, false, false, "\n") &&
+           folder.getChildFile("core").getChildFile("rfb.js").exists();
 }
 
 void StandaloneRemoteAccess::endStaleWebProxy() const

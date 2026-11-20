@@ -150,7 +150,7 @@ export function remoteAccessWebStatus(state: RemoteAccessState): string {
   }
   if (state.webEnabled && state.webRunning) {
     const user = state.username ? `user name "${state.username}" and ` : "";
-    return `On. Open ${remoteAccessWebAddresses(state)} in a web browser (https, not http), choose to continue past the certificate warning, and sign in with ${user}the password above.`;
+    return `On. Open ${remoteAccessWebAddresses(state)} in a web browser (https, not http), choose to continue past the certificate warning, and sign in with ${user}the password above. Tick "Remember in this browser" to log in by itself next time, or add ?password=... to the address.`;
   }
   if (state.webEnabled && !state.enabled) {
     return "On, and starts when remote access is turned on.";
