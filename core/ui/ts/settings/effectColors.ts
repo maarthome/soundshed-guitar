@@ -113,10 +113,10 @@ function saveOpenGroupColor(hex: string): void {
 }
 
 function renderSegments(): void {
-  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-effect-colors-mode]")) {
+  for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>("[data-effect-colors-mode]"))) {
     button.setAttribute("aria-checked", String(button.dataset.effectColorsMode === current.mode));
   }
-  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-effect-colors-strength]")) {
+  for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>("[data-effect-colors-strength]"))) {
     button.setAttribute("aria-checked", String(button.dataset.effectColorsStrength === current.strength));
   }
 }
@@ -159,7 +159,7 @@ function updateEditor(hex: string): void {
   }
   editor.querySelector("[data-effect-colors-hue]")?.setAttribute("aria-valuenow", String(Math.round(editing.h)));
   const rgb = hexToRgb(hex);
-  for (const input of editor.querySelectorAll<HTMLInputElement>("[data-effect-colors-channel]")) {
+  for (const input of Array.from(editor.querySelectorAll<HTMLInputElement>("[data-effect-colors-channel]"))) {
     const value = String(rgb[input.dataset.effectColorsChannel as keyof Rgb]);
     // The field being typed in keeps what is typed.
     if (document.activeElement !== input && input.value !== value) {
@@ -170,7 +170,7 @@ function updateEditor(hex: string): void {
   if (hexLabel) {
     hexLabel.textContent = hex.toUpperCase();
   }
-  for (const chip of editor.querySelectorAll<HTMLElement>("[data-effect-colors-chip]")) {
+  for (const chip of Array.from(editor.querySelectorAll<HTMLElement>("[data-effect-colors-chip]"))) {
     chip.setAttribute("aria-checked", String(chip.dataset.effectColorsChip === hex.toLowerCase()));
   }
 }

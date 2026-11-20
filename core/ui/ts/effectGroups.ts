@@ -169,7 +169,7 @@ export function notePluginCategory(nodeId: string, category: string): void {
   }
   pluginCategoryByNode.set(nodeId, category);
   const group = effectGroupForPluginCategory(category);
-  for (const element of document.querySelectorAll<HTMLElement>(".signal-node[data-node-id]")) {
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>(".signal-node[data-node-id]"))) {
     if (element.dataset.nodeId === nodeId) {
       element.dataset.effectGroup = group;
     }
