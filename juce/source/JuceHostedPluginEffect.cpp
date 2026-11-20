@@ -1079,6 +1079,13 @@ std::string JuceHostedPluginEffect::GetConfig(const std::string& key) const
         return FromJuceString(mPluginDescription.name);
     }
 
+    // The plugin's own kind, as its format puts it: an LV2 class label ("Reverb Plugin") or
+    // VST3 sub-categories ("Fx|Reverb"). The UI colours the node by it (ts/effectGroups.ts).
+    if (key == "pluginCategory")
+    {
+        return FromJuceString(mPluginDescription.category);
+    }
+
     if (key == kPluginStateBase64ConfigKey)
     {
         return CapturePluginStateBase64();

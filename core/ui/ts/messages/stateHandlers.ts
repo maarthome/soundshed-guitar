@@ -9,6 +9,7 @@ import { renderBlendList } from "../blendManager.js";
 import { recordAppSetting, replaceAppSettings } from "../appSettingsStore.js";
 import { requestGlobalChainState } from "../bridge.js";
 import { applyDensityAppSettings } from "../compactMode.js";
+import { applyEffectGroupAppSettings } from "../settings/effectColors.js";
 import { renderCompositeList } from "../compositeEditor.js";
 import { handleCompositeLibrary } from "../compositeEffects.js";
 import type { CompositeEffectDefinition } from "../compositeTypes.js";
@@ -92,6 +93,7 @@ export function onState(payload: IncomingPayload): void {
   if (appSettings) {
     replaceAppSettings(appSettings as AppSettings);
     applyDensityAppSettings(appSettings);
+    applyEffectGroupAppSettings(appSettings);
     applyVisualizerBackground();
     applyStoredDemoAudioSelection();
     applyToneSharingAppSettings(appSettings);

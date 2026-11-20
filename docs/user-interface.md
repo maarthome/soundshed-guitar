@@ -104,7 +104,7 @@ keeps the existing Library/Folder behavior.
 | `modelLoaded` | `{path}` | NAM model loaded |
 | `irLoaded` | `{path}` | IR cab loaded |
 | `hostedPluginResourceLoadFailed` | `{nodeId, resourceType, resourceId?, filePath?, resourceIndex?, message}` | Hosted plugin failed to load; UI shows inline error and clears loading indicator |
-| `hostedPluginResourceLoadCompleted` | `{nodeId, resourceType, resourceId?, resourceIndex?}` | Hosted plugin resource selection finished loading; UI clears loading indicator |
+| `hostedPluginResourceLoadCompleted` | `{nodeId, resourceType, resourceId?, resourceIndex?, pluginCategory?}` | Hosted plugin resource selection finished loading; UI clears loading indicator. `pluginCategory` is the plugin's own kind as its format gives it (an LV2 class label such as `Reverb Plugin`, VST3 sub-categories such as `Fx\|Reverb`), which picks the node's effect group colour (`core/ui/ts/effectGroups.ts`) |
 | `nodeResourceBrowseCancelled` | `{nodeId, resourceType, resourceIndex?, exposedResourceId?}` | Node resource browse dialog dismissed without a selection |
 | `resourceImported` | `{...}` | Remote resource imported |
 | `resourceImportFailed` | `{message}` | Remote resource import failed |
@@ -693,6 +693,29 @@ the engine-side settings that used to sit beside them — Preset Switching, Adva
 Targets — stayed in General under its *DSP* heading. Each tab is one partial under
 `ui-components/panels/`, and its id is `equipment-tab-<tabId>`; a new one needs the button,
 the partial's include, and the tab id in `resolveEquipmentTabId()`.
+
+### Effect colours: Settings > Appearance (`core/ui/ts/settings/effectColors.ts`)
+
+my_gui only. The Appearance tab (after General) colours the chain's effect boxes by **effect
+group**: Noise Reduction, Dynamics, Drive, Distortion, Amp, Cab, EQ, Filter, Modulation, Pitch,
+Delay, Reverb, Spatial, Synth and Utility (LV2's main plugin classes with Soundshed's own
+categories). **Default** leaves the boxes as the theme draws them; **User** fills each with its
+group's colour, mixed into the card colour by the **Fill strength** (Subtle, Medium, Strong),
+and draws its edge in it. Tapping a group opens its colour editor across the full width: a field
+to drag in for saturation (across) and brightness (up and down), a hue strip, a preview, R G B
+fields with the hex value, and a row of quick colours. A drag shows the colour at once and saves
+it when the finger lifts; the R G B fields save on Enter or when left (values above 255 are
+taken as 255). **Reset colours** puts every group back. Only the R G B fields need a keyboard.
+
+A built-in effect's group follows its category, refined by name for a few (gates and Noise
+Reduction are Noise Reduction, Distortion and Multi-band Distortion are Distortion, Wah is
+Filter, Spatial 3D is Spatial). A hosted plugin's follows the `pluginCategory` the engine sends
+with `hostedPluginResourceLoadCompleted`; until it arrives, or when the plugin names no class,
+the box is Utility. `core/ui/ts/effectGroups.ts` holds the groups and the matching, and sets
+`data-effect-colors` and `data-effect-color-strength` on the root and a
+`--effect-group-color` per `[data-effect-group]` (`css/effect-groups.css`). The choice is the
+app setting `ui.effectGroupColors`: `{mode: "default" | "user", strength: "subtle" | "medium" |
+"strong", colors: {<group>: "#rrggbb"}}`, holding only colours changed from the defaults.
 
 ### Theme and zoom (`core/ui/ts/themeFlyout.ts`)
 

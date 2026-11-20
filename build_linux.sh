@@ -47,6 +47,8 @@ BUILD_ZIP=true
 # Only the app itself. The plugin targets stay configured (so switching back and forth
 # does not reconfigure and rebuild everything); they are just not built or staged.
 STANDALONE_ONLY=false
+# --no-native-ui: leave out Nano Q's native UI (SOUNDSHED_NANOQ_UI) and the packages only it needs.
+NATIVE_UI=true
 ARCH_REQUEST="native"
 DIST_DIR_OVERRIDE=""
 BUILD_DIR_OVERRIDE=""
@@ -74,6 +76,7 @@ Usage: ./build_linux.sh [options]
     --skip-build       Skip CMake build step (only re-stage artifacts)
     --no-lv2           Skip building and staging the LV2 plugin bundle
     --standalone-only  Build and stage only the standalone app: no VST3, CLAP or LV2
+    --no-native-ui     Leave out Nano Q's native UI (and the packages only it needs)
     --no-zip           Skip creation of a .zip archive of the distribution
     --dist-dir <p>     Override the output staging directory (default: linux-dist-<arch>)
     --build-dir <p>    Override the CMake build directory (default: juce/builds-linux-<arch>)
@@ -228,6 +231,7 @@ while [[ $# -gt 0 ]]; do
         --skip-build)     SKIP_BUILD=true ;;
         --no-lv2)         BUILD_LV2=false ;;
         --standalone-only) STANDALONE_ONLY=true ;;
+        --no-native-ui)   NATIVE_UI=false ;;
         --no-zip)         BUILD_ZIP=false ;;
         # The opt-in spellings from before LV2 and zip became the default; CI and the
         # README still pass them.
@@ -396,14 +400,12 @@ check_linux_dependencies() {
         xrandr
         xi
         gtk+-x11-3.0
-        # The native UI (SOUNDSHED_NANOQ_UI): Elements' X11 host and Artist's Cairo backend.
-        xcursor
-        cairo
-        cairo-xlib
-        cairo-ft
-        harfbuzz
-        libwebp
     )
+
+    # The native UI (SOUNDSHED_NANOQ_UI): Elements' X11 host and Artist's Cairo backend.
+    if [[ "$NATIVE_UI" == true ]]; then
+        required_modules+=(xcursor cairo cairo-xlib cairo-ft harfbuzz libwebp)
+    fi
 
     local module
     for module in "${required_modules[@]}"; do
@@ -494,6 +496,7 @@ build_for_arch() {
             -DCMAKE_BUILD_TYPE=Release
             -DGUITARFX_ENABLE_LV2=$([[ "$BUILD_LV2" == true ]] && printf 'ON' || printf 'OFF')
             -DCMAKE_SUPPRESS_DEVELOPER_WARNINGS=ON
+            -DSOUNDSHED_NANOQ_UI=$([[ "$NATIVE_UI" == true ]] && printf 'ON' || printf 'OFF')
         )
 
         if [[ -n "$toolchain_file" ]]; then

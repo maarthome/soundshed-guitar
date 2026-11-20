@@ -9,8 +9,12 @@
 # no zip archive, which is all a Pi that runs the app itself needs and much
 # quicker. Pass --all for the full build.
 #
-# Usage: ./build_pi.sh [--all] [build_linux.sh options]
-#   --all   Build the plugins (VST3, CLAP, LV2) and the zip archive as well
+# Nano Q's native UI (a second, experimental editor) is left out too: the Pi runs the web UI,
+# and the native one needs more packages and build time. Pass --native-ui to build it.
+#
+# Usage: ./build_pi.sh [--all] [--native-ui] [build_linux.sh options]
+#   --all         Build the plugins (VST3, CLAP, LV2) and the zip archive as well
+#   --native-ui   Build Nano Q's native UI as well
 #   Every other argument is passed straight through to build_linux.sh, for example:
 #     ./build_pi.sh --jobs 2
 #     ./build_pi.sh --skip-ts
@@ -40,14 +44,21 @@ fi
 
 # --all is ours; the rest goes to build_linux.sh.
 BUILD_ALL=false
+NATIVE_UI=false
 BUILD_ARGS=()
 for argument in "$@"; do
     if [[ "$argument" == "--all" ]]; then
         BUILD_ALL=true
+    elif [[ "$argument" == "--native-ui" ]]; then
+        NATIVE_UI=true
     else
         BUILD_ARGS+=("$argument")
     fi
 done
+
+if [[ "$NATIVE_UI" == false ]]; then
+    BUILD_ARGS=(--no-native-ui "${BUILD_ARGS[@]}")
+fi
 
 if [[ "$BUILD_ALL" == false ]]; then
     BUILD_ARGS=(--standalone-only --no-zip "${BUILD_ARGS[@]}")

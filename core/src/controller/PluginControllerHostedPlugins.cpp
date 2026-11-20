@@ -148,6 +148,31 @@ void PluginController::NotifyHostedPluginResourceLoadCompleted(const std::string
     nlohmann::json message{
         {"type", "hostedPluginResourceLoadCompleted"}, {"nodeId", nodeId}, {"resourceType", "plugin"}};
 
+    // The plugin's kind (an LV2 class label, VST3 sub-categories), for the node's colour. The
+    // same split as the failure report: the lookup under the DSP lock, the plugin asked after.
+    if (mActivePreset)
+    {
+        const std::string presetId = !mActivePresetId.empty() ? mActivePresetId : mActivePreset->id;
+        const EffectProcessor* hostedPlugin = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mDSPMutex);
+            const auto* processor = mPresetMixer.GetNodeProcessor(presetId, nodeId);
+
+            if (processor && IsHostedPluginProcessor(*processor))
+            {
+                hostedPlugin = processor;
+            }
+        }
+
+        if (hostedPlugin)
+        {
+            if (const auto category = hostedPlugin->GetConfig("pluginCategory"); !category.empty())
+            {
+                message["pluginCategory"] = category;
+            }
+        }
+    }
+
     if (resourceIndex >= 0)
     {
         message["resourceIndex"] = resourceIndex;

@@ -47,7 +47,7 @@ import { sendCollapseParallelSplit, sendMoveSignalPathNodeToEdge, sendReplaceSig
 import { getSelectedSignalPathNode } from "./signalPath/nodeResources.js";
 import { getEffectVisualizationEquipmentImage, showVisualizerPanel, updateEffectVisualization } from "./signalPath/visualization.js";
 import { expectAddedNode, forgetExpectedAddedNode, takeAddedNode } from "./signalPath/addedNode.js";
-import { getCategoryClass, getNodeCategory, getNodeIcon, handleNamIrFileDrop, inferResourceTypeFromFile, isNamOrCabIrNode, nodeAcceptsResourceType } from "./signalPath/nodeTypes.js";
+import { getCategoryClass, getNodeCategory, getNodeEffectGroup, getNodeIcon, handleNamIrFileDrop, inferResourceTypeFromFile, isNamOrCabIrNode, nodeAcceptsResourceType } from "./signalPath/nodeTypes.js";
 import { getEditableSignalPathPreset, removeInlineMixer, renderInlineMixer, renderMixerPresetTabs } from "./signalPath/mixer.js";
 import { isMixTabActive } from "./signalPath/state.js";
 import { setNodeParamsRefresher, setSignalPathRenderer } from "./signalPath/render.js";
@@ -973,7 +973,7 @@ function renderNodeElement(node: GraphNode, options?: RenderNodeElementOptions):
 
   return `
     <div class="signal-node ${escapeHtml(categoryClass)} ${bypassedClass} ${selectedClass} ${missingClass}${thumbClass}" 
-         data-node-id="${escapeHtml(node.id)}" 
+         data-node-id="${escapeHtml(node.id)}" data-effect-group="${escapeHtml(getNodeEffectGroup(node))}"
          tabindex="0"${nodeTitleAttr}${nodeAriaLabel}>
       ${thumbAvatar}
       ${deleteButton}

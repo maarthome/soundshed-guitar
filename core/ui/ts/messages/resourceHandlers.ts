@@ -4,6 +4,7 @@
  */
 
 import { handleResourceDataMessage } from "../archiveUtils.js";
+import { notePluginCategory } from "../effectGroups.js";
 import { appendLog } from "../logging.js";
 import { showNotification } from "../notifications.js";
 import { renderActivePreset } from "../presets.js";
@@ -130,6 +131,11 @@ export function onHostedPluginResourceLoadFailed(payload: IncomingPayload): void
 }
 
 export function onHostedPluginResourceLoadCompleted(payload: IncomingPayload): void {
+  // The plugin's kind (LV2 class, VST3 sub-categories) colours its box: ts/effectGroups.ts.
+  const { nodeId, pluginCategory } = payload as { nodeId?: unknown; pluginCategory?: unknown };
+  if (typeof nodeId === "string" && typeof pluginCategory === "string") {
+    notePluginCategory(nodeId, pluginCategory);
+  }
   handleHostedPluginResourceLoadCompleted(payload as {
     nodeId?: string;
     resourceType?: string;

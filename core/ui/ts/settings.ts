@@ -29,6 +29,7 @@ import { initMonoOutputUnityToggle, refreshMonoOutputUnityToggle } from "./setti
 import { initLibraryExport } from "./settings/libraryExport.js";
 import { initLibraryFilters, refreshLibraryView } from "./settings/libraryView.js";
 import { initAudioTuningSettings, syncAudioTuningAvailability } from "./settings/audioTuning.js";
+import { initEffectColorSettings } from "./settings/effectColors.js";
 import { initRemoteAccessSettings, syncRemoteAccessAvailability } from "./settings/remoteAccess.js";
 import { initEquipmentTabs, initLibraryTabs } from "./settings/tabs.js";
 import { applyTone3000ModeVisibility, clearApiKey, initTone3000ProxyHealthCheck, initTone3000UseSoundshedApiToggle, refreshTone3000ApiKeyField, saveApiKey, updateTone3000ApiModeStatus, updateTone3000ProxyHealthStatus } from "./settings/tone3000Settings.js";
@@ -61,6 +62,7 @@ export function initSettingsPanel(): void {
   initAudioDeviceSettings();
   initRemoteAccessSettings();
   initAudioTuningSettings();
+  initEffectColorSettings();
   initDiagnosticsToggle();
   initUserInputCalibrationControls();
   initFeatureToggles();

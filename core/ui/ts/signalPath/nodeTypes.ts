@@ -12,6 +12,7 @@ import { getFxEffectIcon } from "../iconAssets.js";
 import { DEFAULT_NODE_CLASS, NODE_CATEGORY_ALIASES, NODE_CLASSES } from "../generated/effectPresentation.js";
 import { deduplicateResourcesByHashAndPath, resolveResourceIdAlias } from "../resourceDedup.js";
 import { getLibraryResource } from "../resourceLibrary.js";
+import { effectGroupForBuiltIn, effectGroupForPluginCategory, getPluginCategoryForNode, type EffectGroupId } from "../effectGroups.js";
 export function getNodeIcon(nodeType: string): string {
   return getFxEffectIcon(nodeType);
 }
@@ -154,6 +155,15 @@ async function handleNamIrFileDrop(file: File, nodeId: string, resourceIndex?: n
     category: "Local",
     metadata: { provider: "local" },
   });
+}
+
+/** The effect group that colours the node's box (ts/effectGroups.ts): a hosted plugin's from its own kind. */
+export function getNodeEffectGroup(node: GraphNode): EffectGroupId {
+  if (node.type === EffectGuids.kPluginHost) {
+    const category = getPluginCategoryForNode(node.id);
+    return category ? effectGroupForPluginCategory(category) : "utility";
+  }
+  return effectGroupForBuiltIn(getNodeCategory(node), getNodeEffectInfo(node)?.displayName ?? "");
 }
 
 export function getNodeCategory(node: GraphNode): string {

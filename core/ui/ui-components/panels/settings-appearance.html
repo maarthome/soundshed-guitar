@@ -1,0 +1,30 @@
+          <!-- Settings > Appearance (my_gui): effect box colours by effect group (ts/settings/effectColors.ts,
+               ts/effectGroups.ts, css/effect-groups.css). -->
+          <div class="equipment-tab-panel" id="equipment-tab-appearance">
+            <h2>Appearance</h2>
+            <div class="settings-section">
+              <h3>Effect Colours</h3>
+              <div class="settings-row">
+                <span class="settings-row-label" id="effect-colors-mode-label">Effect box colours</span>
+                <div class="effect-colors-segmented" role="radiogroup" aria-labelledby="effect-colors-mode-label">
+                  <button type="button" class="effect-colors-segment" data-effect-colors-mode="default" role="radio" aria-checked="true">Default</button>
+                  <button type="button" class="effect-colors-segment" data-effect-colors-mode="user" role="radio" aria-checked="false">User</button>
+                </div>
+              </div>
+              <div class="settings-hint" id="effect-colors-mode-hint">Default: the boxes in the chain look as the theme draws them. User: each box is filled with the colour of its effect group, set below.</div>
+              <div class="settings-row" id="effect-colors-strength-row">
+                <span class="settings-row-label" id="effect-colors-strength-label">Fill strength</span>
+                <div class="effect-colors-segmented" role="radiogroup" aria-labelledby="effect-colors-strength-label">
+                  <button type="button" class="effect-colors-segment" data-effect-colors-strength="subtle" role="radio" aria-checked="false">Subtle</button>
+                  <button type="button" class="effect-colors-segment" data-effect-colors-strength="medium" role="radio" aria-checked="true">Medium</button>
+                  <button type="button" class="effect-colors-segment" data-effect-colors-strength="strong" role="radio" aria-checked="false">Strong</button>
+                </div>
+              </div>
+              <!-- One row per group, filled in by ts/settings/effectColors.ts. -->
+              <div class="effect-colors-groups" id="effect-colors-groups" role="list"></div>
+              <div class="settings-row">
+                <button type="button" class="secondary" id="effect-colors-reset">Reset colours</button>
+              </div>
+              <div class="settings-hint">A built-in effect's group follows its kind (a Noise Gate is Noise Reduction, an Overdrive is Drive, a Distortion is Distortion). A hosted LV2 or VST3 plugin's follows the class the plugin gives itself, such as Reverb or Delay; one that gives none counts as Utility.</div>
+            </div>
+          </div>
