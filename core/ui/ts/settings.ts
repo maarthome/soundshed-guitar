@@ -10,20 +10,20 @@ import { updateAppSetting } from "./appSettingsStore.js";
 import {
   initDensitySelect,
   initSignalFlowAnimationToggle,
-  initThemeSelect,
   initWheelAdjustToggle,
   initZoomControls,
   refreshSignalFlowAnimationToggle,
   refreshWheelAdjustToggle,
 } from "./settings/appearance.js";
 import { initAudioDeviceSettings, syncAudioDeviceSettingsAvailability } from "./settings/audioDevice.js";
-import { apiKeyInput, channelModeControlToggle, clearButton, dspNominalLevelInput,dspOutputLimiterToggle, dspProtectionCeilingInput, factoryArchiveExportEffectPresetsToggle, factoryArchiveLoadingToggle, namAntiAliasPhaseSelect, namAutoInputCalibrationToggle, namInterfaceCalibrationLevelInput, namOversamplingSelect, namSlimmableSizeInput, presetSwitchTailSelect, saveButton, themeSelect, tone3000UseSoundshedApiToggle, updateCheckToggle } from "./settings/dom.js";
+import { apiKeyInput, channelModeControlToggle, clearButton, dspNominalLevelInput,dspOutputLimiterToggle, dspProtectionCeilingInput, factoryArchiveExportEffectPresetsToggle, factoryArchiveLoadingToggle, namAntiAliasPhaseSelect, namAutoInputCalibrationToggle, namInterfaceCalibrationLevelInput, namOversamplingSelect, namSlimmableSizeInput, presetSwitchTailSelect, saveButton, tone3000UseSoundshedApiToggle, updateCheckToggle } from "./settings/dom.js";
 import { initChannelModeControlToggle, initDiagnosticsToggle, initDspLevelTargetControls,initFactoryArchiveExportEffectPresetsToggle, initFactoryArchiveLoadingToggle, initPresetSwitchControls, initUpdateCheckToggle } from "./settings/dspSettings.js";
 import { initFeatureToggles, refreshFeatureToggleStates, syncFeatureVisibility } from "./settings/features.js";
 import { initUserInputCalibrationControls, refreshUserInputCalibrationView } from "./settings/inputCalibration.js";
 import { API_KEY_SETTING, CHANNEL_MODE_CONTROL_SETTING, DSP_NOMINAL_LEVEL_DEFAULT,DSP_NOMINAL_LEVEL_MAX, DSP_NOMINAL_LEVEL_MIN, DSP_NOMINAL_LEVEL_SETTING, DSP_OUTPUT_LIMITER_SETTING, DSP_PROTECTION_CEILING_DEFAULT, DSP_PROTECTION_CEILING_MAX, DSP_PROTECTION_CEILING_MIN, DSP_PROTECTION_CEILING_SETTING, FACTORY_ARCHIVE_EXPORT_EFFECT_PRESETS_SETTING, FACTORY_ARCHIVE_LOADING_SETTING, NAM_ANTI_ALIAS_PHASE_DEFAULT, NAM_ANTI_ALIAS_PHASE_MAX, NAM_ANTI_ALIAS_PHASE_MIN, NAM_ANTI_ALIAS_PHASE_SETTING, NAM_AUTO_INPUT_CALIBRATION_SETTING, NAM_INTERFACE_CALIBRATION_LEVEL_DEFAULT, NAM_INTERFACE_CALIBRATION_LEVEL_MAX, NAM_INTERFACE_CALIBRATION_LEVEL_MIN, NAM_INTERFACE_CALIBRATION_LEVEL_SETTING, NAM_OVERSAMPLING_DEFAULT, NAM_OVERSAMPLING_MAX, NAM_OVERSAMPLING_MIN, NAM_OVERSAMPLING_SETTING, NAM_SLIMMABLE_SIZE_DEFAULT, NAM_SLIMMABLE_SIZE_MAX, NAM_SLIMMABLE_SIZE_MIN, NAM_SLIMMABLE_SIZE_SETTING, PRESET_SWITCH_TAIL_DEFAULT, PRESET_SWITCH_TAIL_MAX, PRESET_SWITCH_TAIL_MIN, PRESET_SWITCH_TAIL_SETTING, TONE3000_USE_SOUNDSHED_API_SETTING, UPDATE_CHECK_ENABLED_SETTING } from "./settings/keys.js";
 import { initLibraryCleanup } from "./settings/libraryCleanup.js";
 import { initMultiCoreToggle, refreshMultiCoreToggle } from "./settings/multiCore.js";
+import { initNativeEditorToggle, refreshNativeEditorToggle } from "./settings/nativeEditor.js";
 import { initNamEngineToggle, refreshNamEngineToggle } from "./settings/namEngine.js";
 import { initMonoOutputUnityToggle, refreshMonoOutputUnityToggle } from "./settings/monoOutputUnity.js";
 import { initLibraryExport } from "./settings/libraryExport.js";
@@ -35,13 +35,13 @@ import { applyTone3000ModeVisibility, clearApiKey, initTone3000ProxyHealthCheck,
 import { refreshSettingsUpdateBanner, updateCurrentVersionDisplay } from "./settings/updateBanner.js";
 import { getSettingValue, restoreIndexSelectSetting, sanitizeNumericSetting } from "./settings/values.js";
 import { uiState } from "./state.js";
-import { themeSwitcher } from "./theme-switcher.js";
+import { initVisualizerBackgroundControls, refreshVisualizerBackgroundControls } from "./visualizerBackground.js";
 import { handleAppSettingUpdate } from "./tone3000.js";
 import { getTone3000ApiClientConfig } from "./tone3000Api.js";
-import { initTone3000Browser } from "./tone3000Browser.js";
+import { retryTone3000BrowserAccess } from "./tone3000Browser.js";
 import { updateSignalDiagnosticsView } from "./views.js";
 
-export { initDensitySelect, initThemeSelect, initZoomControls } from "./settings/appearance.js";
+export { initDensitySelect, initZoomControls } from "./settings/appearance.js";
 export { initDiagnosticsToggle } from "./settings/dspSettings.js";
 export { initUserInputCalibrationControls } from "./settings/inputCalibration.js";
 export { activateAdvancedSubTab, activateEquipmentTab, activateLibraryTab } from "./settings/tabs.js";
@@ -75,19 +75,19 @@ export function initSettingsPanel(): void {
   initEquipmentTabs();
   initLibraryFilters();
   initLibraryCleanup();
-  initThemeSelect();
   initZoomControls();
   initDensitySelect();
   initWheelAdjustToggle();
   initSignalFlowAnimationToggle();
+  initVisualizerBackgroundControls();
   initMultiCoreToggle();
+  initNativeEditorToggle();
   initNamEngineToggle();
   initMonoOutputUnityToggle();
   initLibraryTabs();
   initLibraryExport();
 
   refreshSettingsView();
-  initTone3000Browser();
 }
 
 export function refreshSettingsView(): void {
@@ -98,19 +98,20 @@ export function refreshSettingsView(): void {
     updateAppSetting(TONE3000_USE_SOUNDSHED_API_SETTING, true);
     void handleAppSettingUpdate(TONE3000_USE_SOUNDSHED_API_SETTING, true);
   }
+  // Tones' Tone 3000 tab may have been shown before the settings above were known.
+  retryTone3000BrowserAccess();
 
   if (apiKeyInput) {
     apiKeyInput.value = "";
   }
   refreshTone3000ApiKeyField();
   refreshUserInputCalibrationView();
-  if (themeSelect) {
-    themeSelect.value = themeSwitcher.getCurrentTheme();
-  }
   refreshFeatureToggleStates();
   refreshWheelAdjustToggle();
   refreshSignalFlowAnimationToggle();
+  refreshVisualizerBackgroundControls();
   refreshMultiCoreToggle();
+  refreshNativeEditorToggle();
   refreshNamEngineToggle();
   refreshMonoOutputUnityToggle();
   if (factoryArchiveLoadingToggle) {

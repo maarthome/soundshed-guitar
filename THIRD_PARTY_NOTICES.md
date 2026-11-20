@@ -152,3 +152,19 @@ The SMuFL music font alphaTab draws with, shipped as `dist/vendor/alphatab/font/
 Copyright © 2015, Steinberg Media Technologies GmbH. Licensed under the SIL Open
 Font License, Version 1.1; the full text ships beside the font as
 `Bravura-OFL.txt`.
+
+## Oswald
+
+The Eleven theme's font, shipped in `core/ui/css/fonts/` as a Latin-subset
+variable woff2 file.
+
+Copyright 2016 The Oswald Project Authors. Licensed under the SIL Open Font
+License, Version 1.1; the full text ships beside the font as `Oswald-OFL.txt`.
+
+## Archivo
+
+The Stage theme's font, shipped in `core/ui/css/fonts/` as a Latin-subset
+variable woff2 file.
+
+Copyright 2020 The Archivo Project Authors. Licensed under the SIL Open Font
+License, Version 1.1; the full text ships beside the font as `Archivo-OFL.txt`.

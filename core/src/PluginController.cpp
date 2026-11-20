@@ -23,6 +23,7 @@
 #include "controller/PresetLevelMeter.h"
 #include "controller/ResourceFolderScanner.h"
 #include "controller/ResourceThumbnailService.h"
+#include "controller/UiBackgroundService.h"
 #include "controller/ScaleGuideMessages.h"
 #include "controller/SignalTestService.h"
 #include "controller/TelemetryPublisher.h"
@@ -81,6 +82,8 @@ PluginController::PluginController(IPluginHost& host) : mHost(host)
     mResourceFolderScanner->RegisterMessageHandlers(mMessageHandlers);
     mResourceThumbnails = std::make_unique<ResourceThumbnailService>(sendToUI, mResourceLibrary);
     mResourceThumbnails->RegisterMessageHandlers(mMessageHandlers);
+    mUiBackground = std::make_unique<UiBackgroundService>(mHost, sendToUI, onError);
+    mUiBackground->RegisterMessageHandlers(mMessageHandlers);
     mPresetLevelMeter = std::make_unique<PresetLevelMeter>(
         mHost, sendToUI, [this](const nlohmann::json& payload, nlohmann::json& failure) {
             return BuildPresetLevelJob(payload, failure);
@@ -231,6 +234,19 @@ void PluginController::Initialize()
     // is built only if nothing replaces it first (see mDeferredStartupPreset).
     mDeferStartupBuild = !mHost.IsStandalone();
     LoadLastSessionState();
+
+    if (mDeferStartupBuild)
+    {
+        // Building the start-up preset is what gave the global chain's config its default graphs,
+        // and that now waits. A state saved meanwhile has to carry them all the same (a host can
+        // save an instance it never ran): a restore fills them in, so a state saved without them
+        // came back as a different one, which clap-validator's state tests fail. Nothing is built
+        // here, as the mixer is not prepared yet.
+        mPresetMixer.PrepareGlobalChainSwap(mPresetMixer.GetGlobalChainConfig());
+        std::lock_guard<std::mutex> lock(mDSPMutex);
+        mPresetMixer.CommitGlobalChainSwap();
+    }
+
     mDeferStartupBuild = false;
 
     if (mDeferredStartupPreset)
@@ -288,9 +304,10 @@ void PluginController::Initialize()
 
 void PluginController::Prepare(double sampleRate, int blockSize)
 {
-    // A host that prepares before its message loop has run the build task, or one with no loop
-    // to run it, gets the start-up preset now rather than an empty chain.
-    if (mDeferredStartupPreset && mHost.IsMessageThread())
+    // A host with no loop to run the build task gets the start-up preset now rather than an empty
+    // chain. One with a loop waits for the task: REAPER prepares a plugin it is opening a project
+    // into before it hands over the project's state, so building here was the work thrown away.
+    if (mDeferredStartupPreset && !mHost.RunsPostedTasks() && mHost.IsMessageThread())
     {
         BuildDeferredStartupPreset();
     }
@@ -824,7 +841,11 @@ void PluginController::HandleGetAppInfoRequest()
     msg["os"] = "Unknown";
 #endif
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(_M_ARM64EC)
+    // Before x64: MSVC defines _M_X64 for ARM64EC too. The machine is arm64, and the update
+    // check picks an installer by this.
+    msg["cpu"] = "arm64";
+#elif defined(__x86_64__) || defined(_M_X64)
     msg["cpu"] = "x64";
 #elif defined(__i386__) || defined(_M_IX86)
     msg["cpu"] = "x86";

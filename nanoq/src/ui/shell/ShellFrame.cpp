@@ -6,6 +6,7 @@
 #include "ui/shell/Shell.h"
 
 #include "ui/shell/FrameParts.h"
+#include "ui/widgets/ControlSkin.h"
 
 #include "uiclient/FeatureFlags.h"
 #include "uiclient/NodeLabels.h"
@@ -96,7 +97,7 @@ Ptr Shell::BuildRail()
     items.push_back(FixedHeight(42, Row({HGap(9), settings, Stretch()})));
     items.push_back(VGap(6));
     auto rail = Col(items);
-    return Fill(mTheme.Bar(), rail);
+    return Dressed(mTheme, mTheme.Bar(), &Backdrops::header, rail);
 }
 
 // ── The preset bar ──────────────────────────────────────────────────────────────
@@ -197,7 +198,8 @@ Ptr Shell::BuildTopBar()
         }
 
         items.insert(items.end(), {controls, HGap(6)});
-        return FixedHeight(metrics::TopBarHeight(), Fill(mTheme.Tertiary(), PadXY(0, 2, Row(items))));
+        return FixedHeight(metrics::TopBarHeight(),
+                           Dressed(mTheme, mTheme.Tertiary(), &Backdrops::controlBar, PadXY(0, 2, Row(items))));
     }
 
     std::vector<Ptr> items{HGap(15), prev, HGap(6), pill,   HGap(6), next,    HGap(10), create, HGap(4), edit,
@@ -210,7 +212,8 @@ Ptr Shell::BuildTopBar()
 
     items.insert(items.end(), {controls, HGap(6)});
     auto bar = Row(items);
-    return FixedHeight(metrics::TopBarHeight(), Fill(mTheme.Tertiary(), PadXY(0, 6, bar)));
+    return FixedHeight(metrics::TopBarHeight(),
+                       Dressed(mTheme, mTheme.Tertiary(), &Backdrops::controlBar, PadXY(0, 6, bar)));
 }
 
 int Shell::TouchBarExtras(float width, bool update)
@@ -340,7 +343,7 @@ Ptr Shell::BuildScenes()
         }
 
         tray->push_back(HGap(2));
-        const auto trayColour = mTheme.Pick(el::rgba(24, 24, 30, 184), mTheme.Text().opacity(0.06f));
+        const auto trayColour = mTheme.DarkOr(el::rgba(24, 24, 30, 184), mTheme.Text().opacity(0.06f));
 
         if (touch)
         {
@@ -374,21 +377,17 @@ Ptr Shell::BuildScenes()
 std::shared_ptr<IconButton> Shell::BuildThemeButton()
 {
     auto themeButton = std::make_shared<IconButton>(mTheme, mIcons, "", IconButton::Look::Boxed);
-    const std::string themeName = mState.theme == "light" ? "Light" : mState.theme == "classic" ? "Classic" : "Dark";
+    const std::string themeName(guitarfx::uiclient::theme::FindTheme(mState.theme).label);
     themeButton->Size(84, 28).Label(themeName, 11.0f).Caret(true);
     themeButton->onClick = [this, t = themeButton.get()] {
         std::vector<MenuItem> items;
 
-        // A plain array and no structured binding: MSVC 19.52 rejects the braced range and the
-        // binding's capture here.
-        static const std::pair<const char*, const char*> kChoices[] = {
-            {"dark", "Dark"}, {"light", "Light"}, {"classic", "Classic"}};
-
-        for (const auto& choice : kChoices)
+        // Every theme the web UI lists, in its order.
+        for (const auto& theme : guitarfx::uiclient::theme::kThemes)
         {
-            const std::string id = choice.first;
-            items.push_back(
-                {choice.second, mState.theme == id, false, [this, id] { mSession.Commands().SetTheme(id); }});
+            const std::string id(theme.id);
+            items.push_back({std::string(theme.label), mState.theme == id, false,
+                             [this, id] { mSession.Commands().SetTheme(id); }});
         }
 
         OpenDropdown(t->Bounds(), std::move(items), 150.0f);
@@ -428,9 +427,7 @@ Ptr Shell::BuildHistoryControls()
     b->onClick = [this] { SetChainSlot(Slot::B); };
     a->Enabled(seeded);
     b->Enabled(seeded);
-    auto ab =
-        Over(PadXY(2, 2, Row({a, HGap(2), b})),
-             el::share(Surface(mTheme.Bar(), mTheme.Pick(el::rgba(58, 58, 72, 255), mTheme.BorderStrong()), 6.0f)));
+    auto ab = Over(PadXY(2, 2, Row({a, HGap(2), b})), el::share(Surface(mTheme.Bar(), mTheme.ModalRule(), 6.0f)));
     auto copy = ToolButton(mTheme, mIcons, "ui-swap", [this] { CopyChainSlot(); }, 26.0f, 15.0f);
     copy->Disabled(!seeded);
 
@@ -456,8 +453,7 @@ Ptr Shell::BuildHistoryControls()
         // pair's box as ever.
         a->FaceAt(1.0f);
         b->FaceAt(0.0f);
-        auto box =
-            el::share(Surface(mTheme.Bar(), mTheme.Pick(el::rgba(58, 58, 72, 255), mTheme.BorderStrong()), 6.0f));
+        auto box = el::share(Surface(mTheme.Bar(), mTheme.ModalRule(), 6.0f));
         auto pair = Over(Tight({a, HGap(2), b}), Centred(FixedWidth(54, FixedHeight(25, box))));
         return Tight({undo, redo, pair, copy});
     }
@@ -512,7 +508,8 @@ Ptr Shell::BuildTransport()
     row.push_back(divider());
     row.push_back(options);
     row.push_back(HGap(8));
-    return FixedHeight(metrics::FooterHeight(), Fill(mTheme.Footer(), PadXY(0, touch ? 0 : 3, Row(row))));
+    return FixedHeight(metrics::FooterHeight(),
+                       Dressed(mTheme, mTheme.Footer(), &Backdrops::footer, PadXY(0, touch ? 0 : 3, Row(row))));
 }
 
 void Shell::OpenOptions(el::rect anchor)

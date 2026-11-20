@@ -1,0 +1,178 @@
+/* ===== Studio Theme =====
+ * A light theme drawn as a current piece of studio hardware, all moulded plastic: a warm
+ * light-grey case, paler raised panels, chunky keys that stand proud and travel when pressed,
+ * and one colour used sparingly. Soft shadows from one large soft box overhead. Studio 2003
+ * (studio-2003.css) is the older, used unit.
+ *
+ * The body carries .theme-light as well as .theme-studio (ts/theme-switcher.ts), so every
+ * light-theme rule in the other stylesheets still applies and the theme only restyles what
+ * makes it hardware. This file is its palette, the tokens (which the native UI reads too);
+ * studio-skin.css draws the surfaces, then the controls (knobs, switches, keys, the LCD,
+ * meters).
+ *
+ * Plastic has thickness: a raised part shows a lit top edge, a narrow side wall below its
+ * face (a hard shadow of a few pixels in a darker tone of the case), then a soft shadow on
+ * the case. A recessed part is the same turned over. The images are rendered by
+ * tools/studio-theme-assets/studio.py; grain.png is the moulding texture, a transparent
+ * overlay laid over every plastic colour.
+ */
+
+.theme-studio {
+  /* The one colour: a signal orange, kept to rings, lit keys and the on state. */
+  --color-accent: #d4501c;
+  --color-accent-hover: #e25e28;
+  --color-accent-dark: #a43b10;
+  --color-accent-rgb: 212, 80, 28;
+
+  /* The case, a pale warm grey; raised panels near white, wells a step deeper. */
+  --bg-primary: #ebebe8;
+  --bg-secondary: #eeeeeb;
+  --bg-tertiary: #e3e3df;
+  --bg-surface: #f8f8f6;
+  --bg-elevated: #fbfbfa;
+
+  --bg-panel: #e6e6e2;
+  --bg-card: #fafaf8;
+  --bg-input: #fdfdfc;
+
+  --bg-footer: var(--bg-secondary);
+
+  --bg-fx-primary: #e3e3df;
+  --bg-fx-secondary: #ebebe8;
+  --bg-fx-categories: #e6e6e2;
+
+  /* Pad-printed ink. Muted is 5.9:1 on the deepest well (#e3e3df). */
+  --text-primary: #17181a;
+  --text-secondary: #333539;
+  --text-tertiary: #44474b;
+  --text-muted: #52555a;
+
+  --border-light: #d9d9d4;
+  --border-medium: #c8c8c3;
+  --border-strong: #aaaaa5;
+  --border-dark: #8a8a85;
+  --border-darker: #6c6c68;
+
+  --control-bg: #f7f7f4;
+  --control-knob-bg: #ecebe8;
+  --control-border: #b4b4af;
+  --control-indicator: #2a2c30;
+  --knob-ring-color: #dc5822;
+  --knob-ring-start: #cf4c1a;
+  --knob-ring-end: #ee7a44;
+  --knob-ring-track: rgba(30, 32, 36, 0.12);
+
+  --toggle-bg: #d0d0cb;
+  --toggle-border: #b4b4af;
+
+  /* Soft and layered: a tight contact shadow under a wide, faint one. */
+  --shadow-sm: 0 1px 1px rgba(28, 28, 24, 0.07), 0 1px 3px rgba(28, 28, 24, 0.07);
+  --shadow-md: 0 1px 2px rgba(28, 28, 24, 0.07), 0 5px 14px rgba(28, 28, 24, 0.1);
+  --shadow-lg: 0 2px 4px rgba(28, 28, 24, 0.07), 0 12px 30px rgba(28, 28, 24, 0.13);
+  --shadow-xl: 0 4px 10px rgba(28, 28, 24, 0.08), 0 24px 56px rgba(28, 28, 24, 0.17);
+
+  --bg-browser-shell: rgba(246, 246, 243, 0.98);
+  --bg-browser-header: rgba(250, 250, 248, 0.98);
+  --bg-browser-sidebar: rgba(238, 238, 235, 0.97);
+  --bg-browser-card: rgba(252, 252, 250, 0.98);
+  --bg-browser-input: rgba(253, 253, 252, 0.98);
+  --bg-browser-hover: rgba(212, 80, 28, 0.06);
+  --bg-browser-selected: rgba(212, 80, 28, 0.11);
+  --border-browser: rgba(206, 206, 201, 0.9);
+  --border-browser-strong: rgba(170, 170, 165, 0.95);
+
+  --bg-control: #e3e3df;
+  --button-bg: #fafaf8;
+  --button-text: #17181a;
+  --button-border: #b4b4af;
+  --button-bg-hover: #ffffff;
+  --button-border-hover: #8a8a85;
+
+  /* Dialogs are near white, as the tuner and MIDI dialogs show them. */
+  --modal-bg: #f8f8f6;
+  --modal-bg-raised: #fdfdfc;
+  --modal-text: #17181a;
+  --modal-text-secondary: #333539;
+  --modal-text-muted: #52555a;
+  --modal-border: #d0d0cb;
+  --modal-border-medium: #bdbdb8;
+  --modal-close-hover: rgba(28, 28, 24, 0.07);
+  --modal-input-bg: #ffffff;
+  --modal-input-text: #17181a;
+  --modal-input-border: #b4b4af;
+  --modal-input-placeholder: #737570;
+
+  --eq-curve-grid: rgba(23, 24, 26, 0.1);
+  --eq-curve-response: rgba(212, 80, 28, 0.95);
+  --eq-curve-handle-stroke: rgba(23, 24, 26, 0.8);
+  --eq-curve-spectrum-fill-top: rgba(60, 62, 66, 0.18);
+  --eq-curve-spectrum-fill-bottom: rgba(60, 62, 66, 0.02);
+  --eq-curve-spectrum-line: rgba(60, 62, 66, 0.36);
+
+  --performance-plot-line: rgba(212, 80, 28, 0.95);
+  --performance-plot-fill: rgba(212, 80, 28, 0.12);
+  --performance-plot-grid: rgba(112, 112, 106, 0.36);
+
+  --sb-track: var(--bg-tertiary);
+  --sb-thumb: var(--border-strong);
+  --sb-thumb-hover: var(--border-dark);
+
+  /* A well moulded into the panel: shade inside its top edge, a lit lip at its foot. */
+  --panel-inset-bg: linear-gradient(180deg, rgba(40, 40, 34, 0.06) 0%, rgba(40, 40, 34, 0.025) 100%);
+  --panel-inset-border: rgba(40, 40, 34, 0.12);
+  --panel-inset-shadow:
+    inset 0 2px 4px rgba(28, 28, 24, 0.1),
+    inset 0 1px 1px rgba(28, 28, 24, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.85);
+
+  /* Shared pieces of the look, used by both studio stylesheets. */
+  --studio-grain: url("../../images/themes/studio/grain.png");
+  --studio-grain-size: 256px 256px;
+  --studio-ink: #1d1e21;
+  --studio-ink-soft: #55585d;
+  --studio-edge-light: rgba(255, 255, 255, 0.95);
+  /* The side wall of a raised part: the case colour in shade. */
+  --studio-wall: #d1d1cc;
+  --studio-wall-edge: rgba(28, 28, 24, 0.14);
+  /* A raised panel: a few pixels proud of the case. */
+  --studio-raised:
+    inset 0 1px 0 var(--studio-edge-light),
+    inset 0 -1px 0 rgba(28, 28, 24, 0.05),
+    0 2px 0 var(--studio-wall),
+    0 3px 0 var(--studio-wall-edge),
+    0 5px 8px rgba(28, 28, 24, 0.08),
+    0 14px 28px -8px rgba(28, 28, 24, 0.16);
+  /* A block that stands taller: chain modules, the effect panel. */
+  --studio-raised-high:
+    inset 0 1px 0 var(--studio-edge-light),
+    inset 0 -1px 0 rgba(28, 28, 24, 0.05),
+    0 3px 0 var(--studio-wall),
+    0 4px 0 var(--studio-wall-edge),
+    0 7px 12px rgba(28, 28, 24, 0.09),
+    0 20px 40px -10px rgba(28, 28, 24, 0.2);
+
+  /* The chain's node blocks (css/signal-path/nodes.css): the panels' plastic. */
+  --node-face: var(--bg-card);
+  --node-sheen: rgb(255 255 255 / 0.75);
+  --node-edge-light: var(--studio-edge-light);
+  --node-wall: var(--studio-wall);
+  --node-wall-edge: var(--studio-wall-edge);
+  --node-shadow: rgb(28 28 24 / 0.2);
+
+  --window-border: #a6a6a1;
+
+  /* Component tokens: read by the component sheets, which fall back to the base look. */
+  --effect-shell-title-ink: var(--studio-ink);
+  --effect-shell-subtitle-ink: var(--text-muted);
+  --eq-visualizer-bg: #f1f1ee;
+  --eq-canvas-bg: #f1f1ee;
+  --toast-bg: var(--bg-elevated);
+  --toast-border: var(--border-medium);
+  --add-trigger-ink: var(--studio-ink);
+  --preset-name-ink-hover: var(--studio-lcd-ink);
+  --preset-status-bg: rgba(20, 30, 10, 0.16);
+  --parallel-bg: rgba(28, 28, 24, 0.035);
+  --parallel-border: rgba(28, 28, 24, 0.1);
+  --effect-shell-value-ink: var(--text-secondary);
+  --resource-key-bg: var(--bg-input);
+}

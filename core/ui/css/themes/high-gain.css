@@ -1,0 +1,211 @@
+/* ===== Eleven Theme =====
+ * Its id, class and files keep its first name, high-gain; people see it as Eleven.
+ *
+ * The dark theme drawn as a modern high-gain amp head, the look shared by the amp sims made
+ * for metalcore, deathcore and djent: black tolex and black diamond plate on the bars, a
+ * perforated black grille on the play page with the valves' red-orange glow showing through
+ * it, chunky black knobs inside a thin red arc, and red reserved for what is lit.
+ *
+ * Its images are rendered by tools/high-gain-theme-assets/high_gain.py into
+ * images/themes/high-gain/: plate.jpg (diamond plate), tolex.jpg (pebble vinyl), grille.jpg
+ * (the play page's backdrop) and knob.png.
+ *
+ * The body carries .theme-dark as well as .theme-high-gain (ts/theme-switcher.ts), so every
+ * dark-theme rule in the other stylesheets still applies and the theme only restyles what
+ * makes it Eleven. This file is its palette, the tokens (which the native UI reads too);
+ * high-gain-skin.css is the rest of its look. Both load after dark.css and grain.css.
+ *
+ * The rules of the look:
+ *  - Black with a little cold in it, never blue: steel, not navy.
+ *  - Red is light, not paint: the selected block, a latched key, a switch that is on, the
+ *    value arc and the display glow red, as a valve or an LED would. Nothing else is red.
+ *  - The light comes from above: hardware has a lit top edge and a shadow under it.
+ *  - Type is heavy and condensed, like a gig poster: Oswald for the whole UI, titles included.
+ */
+
+.theme-high-gain {
+  --hg-font-ui: "Oswald", "Inter", system-ui, sans-serif;
+
+  --color-accent: #ff4a3d;
+  --color-accent-hover: #ff6a5e;
+  --color-accent-dark: #c01820;
+  --color-accent-rgb: 255, 74, 61;
+  --color-primary: #e5242c;
+  --accent-primary: var(--color-accent);
+  --toggle-active: var(--hg-red);
+
+  /* Black, cold, neutral. */
+  --bg-primary: #0f1012;
+  --bg-secondary: #151619;
+  --bg-tertiary: #1a1b1e;
+  --bg-surface: #202124;
+  --bg-elevated: #26272b;
+
+  --bg-panel: #18191c;
+  --bg-card: #1f2023;
+  --bg-input: #0c0d0f;
+
+  --bg-dark-primary: #0f1012;
+  --bg-dark-secondary: #151619;
+  --bg-dark-tertiary: #19191c;
+  --bg-dark-surface: #202124;
+
+  --bg-footer: #121315;
+  --bg-header-dark: #0d0e10;
+
+  --bg-fx-primary: #0d0e10;
+  --bg-fx-secondary: #141517;
+  --bg-fx-categories: #0a0a0c;
+
+  /* Text: white for names and values, steel greys for legends. Muted is 6.4:1 on #1a1b1e. */
+  --text-primary: #ededef;
+  --text-secondary: #cacbd0;
+  --text-tertiary: #abacb2;
+  --text-muted: #9fa0a7;
+
+  --text-dark-primary: #f1f1f3;
+  --text-dark-secondary: #d2d3d7;
+  --text-dark-tertiary: #c0c1c6;
+  --text-dark-muted: #b0b1b7;
+  --text-dark-dimmed: #98999f;
+  --text-dark-disabled: #78797f;
+
+  --border-light: #313236;
+  --border-medium: #2a2b2f;
+  --border-strong: #222326;
+  --border-dark: #0b0b0d;
+  --border-darker: #060607;
+
+  --border-dark-light: #45464b;
+  --border-dark-medium: #38393e;
+  --border-dark-strong: #56575d;
+
+  --window-border: #38393e;
+
+  /* Machined, not moulded: corners of a few pixels. */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 5px;
+  --radius-2xl: 6px;
+
+  /* Knobs: the rendered black knob (below) inside a thin red arc on a dark track. */
+  --control-bg: #2a2b2f;
+  --control-knob-bg: #111214;
+  --control-border: #000000;
+  --control-indicator: #f4f4f4;
+  --knob-border-highlight: rgba(255, 255, 255, 0.08);
+  --knob-border-shadow: rgba(0, 0, 0, 0.6);
+  --knob-ring-color: #ff3b2f;
+  --knob-ring-start: #b5141b;
+  --knob-ring-end: #ff4a3d;
+  --knob-ring-track: #2c2d31;
+
+  --toggle-bg: #2e2f33;
+  --toggle-border: #45464b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 6px 18px rgba(0, 0, 0, 0.65);
+  --shadow-xl: 0 12px 36px rgba(0, 0, 0, 0.75);
+
+  --color-preset-bg: #18191c;
+  --color-preset-border: #36373b;
+  --color-preset-text: #e2e2e5;
+  --amp-glow: radial-gradient(ellipse, rgba(255, 60, 30, 0.38) 0%, transparent 70%);
+
+  --bg-browser-shell: rgba(17, 18, 20, 0.95);
+  --bg-browser-header: rgba(26, 27, 30, 0.97);
+  --bg-browser-sidebar: rgba(21, 22, 25, 0.95);
+  --bg-browser-card: rgba(36, 37, 41, 0.92);
+  --bg-browser-input: rgba(12, 13, 15, 0.96);
+  --bg-browser-hover: rgba(255, 255, 255, 0.06);
+  --bg-browser-selected: rgba(229, 36, 44, 0.16);
+  --border-browser: rgba(74, 75, 80, 0.6);
+  --border-browser-strong: rgba(104, 105, 112, 0.75);
+
+  /* Keys: black anodised caps with a lit top edge. */
+  --bg-control: #1f2023;
+  --button-bg: #26272b;
+  --button-text: #e8e8ea;
+  --button-border: #0a0a0b;
+  --button-bg-hover: #2f3035;
+  --button-border-hover: #000000;
+
+  --modal-bg: #17181b;
+  --modal-bg-raised: #1f2023;
+  --modal-text: #f0f0f2;
+  --modal-text-secondary: #cfd0d4;
+  --modal-text-muted: #a9aab0;
+  --modal-border: #36373b;
+  --modal-border-medium: #2e2f33;
+  --modal-close-hover: rgba(255, 255, 255, 0.08);
+  --modal-input-bg: #0c0d0f;
+  --modal-input-text: #f0f0f2;
+  --modal-input-border: #36373b;
+  --modal-input-placeholder: #86878d;
+
+  --eq-curve-grid: rgba(255, 255, 255, 0.06);
+  --eq-curve-response: rgba(255, 74, 61, 0.95);
+  --eq-curve-handle-stroke: rgba(255, 255, 255, 0.9);
+  --eq-curve-spectrum-fill-top: rgba(215, 215, 220, 0.15);
+  --eq-curve-spectrum-fill-bottom: rgba(215, 215, 220, 0.02);
+  --eq-curve-spectrum-line: rgba(225, 225, 230, 0.28);
+
+  --performance-plot-line: rgba(255, 74, 61, 0.95);
+  --performance-plot-fill: rgba(255, 74, 61, 0.14);
+  --performance-plot-grid: rgba(255, 255, 255, 0.1);
+
+  --sb-track: #111214;
+  --sb-track-border: #232427;
+  --sb-thumb: #34353a;
+  --sb-thumb-border: #44454a;
+  --sb-thumb-hover: #46474c;
+  --sb-thumb-hover-border: #56575c;
+
+  /* The chain's blocks (css/signal-path/nodes.css): black anodised, a bright top edge. */
+  --node-face: #1d1e22;
+  --node-sheen: rgb(255 255 255 / 0.05);
+  --node-edge-light: rgb(255 255 255 / 0.16);
+  --node-wall: #060607;
+  --node-wall-edge: rgb(0 0 0 / 0.8);
+  --node-shadow: rgb(0 0 0 / 0.75);
+
+  /* Shared pieces of the look. */
+  --hg-red: #e5242c;
+  --hg-red-hot: #ff4a3d;
+  --hg-red-deep: #a8121a;
+  --hg-glow: rgb(255 52 32 / 0.45);
+  --hg-chrome-edge: rgb(255 255 255 / 0.12);
+  --hg-hairline: #34353a;
+  --hg-card: rgb(17 18 20 / 0.95);
+  --hg-plate: url("../../images/themes/high-gain/plate.jpg");
+  --hg-tolex: url("../../images/themes/high-gain/tolex.jpg");
+
+  /* Component tokens: read by the component sheets, which fall back to the base look. */
+  --nav-tab-ink: #a0a1a7;
+  --nav-tab-ink-hover: #ececee;
+  --nav-tab-active-ink: var(--hg-red-hot);
+  --nav-tab-active-line: var(--hg-red);
+  --effect-shell-title-ink: #f4f4f5;
+  --effect-shell-subtitle-ink: #a9aab0;
+  --eq-visualizer-bg: #0d0e10;
+  --eq-canvas-bg: #0d0e10;
+  --fx-header-bg: var(--modal-bg-raised);
+  --toast-bg: var(--bg-elevated);
+  --toast-border: var(--hg-hairline);
+  --toolbar-btn-border: #000000;
+  --add-trigger-border: #000000;
+  --preset-name-ink-hover: var(--hg-red-hot);
+  --preset-status-bg: rgb(255 52 32 / 0.14);
+  --parallel-bg: rgba(255, 255, 255, 0.02);
+  --parallel-border: #2a2b2f;
+  --resource-key-bg: var(--bg-input);
+}
+
+/* ===== The effect panel's own colours, without the dark theme's blue in them ===== */
+.theme-high-gain {
+  --panel-inset-bg: #111214;
+  --panel-inset-border: #26272b;
+  --panel-inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}

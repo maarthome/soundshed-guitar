@@ -59,6 +59,7 @@ class MetronomeService;
 class SignalTestService;
 class ResourceFolderScanner;
 class ResourceThumbnailService;
+class UiBackgroundService;
 class PresetLevelMeter;
 struct PresetLevelJob;
 class TelemetryPublisher;
@@ -174,6 +175,15 @@ class PluginController
     [[nodiscard]] const nlohmann::json& GetAppSettings() const
     {
         return mAppSettings;
+    }
+
+    /// Takes what other instances have written to the shared store since this one last loaded it.
+    /// The host calls it before choosing an editor by a shared setting: an instance whose editor is
+    /// closed otherwise catches up only once its UI has loaded (uiReady), too late for that choice.
+    /// Message thread.
+    void CatchUpWithSharedSettings()
+    {
+        CatchUpWithSharedStore();
     }
 
     // ── Editor window size ─────────────────────────────────────────
@@ -1296,8 +1306,9 @@ class PluginController
      * hosted plugins) was work thrown away; plugin scanners never play it at all. While
      * mDeferStartupBuild is set (in Initialize() only) ApplyPreset() makes the preset the
      * working copy and parks it here, and BuildDeferredStartupPreset() builds it: from a task
-     * Initialize() posts, from Prepare() on the message thread, or at the end of a restore that
-     * left nothing playing. A restore that brings its own preset or slots supersedes it. Until
+     * Initialize() posts, from Prepare() for a host that never runs that task, or at the end of
+     * a restore that left nothing playing. Not from Prepare() otherwise: REAPER prepares a
+     * plugin before restoring the project into it. A restore that brings its own preset or slots supersedes it. Until
      * then the mixer has no slot, and SnapshotActivePresetConfigs() reports the one it will
      * have, so a state saved in between restores the same. Message thread only.
      */
@@ -1377,6 +1388,8 @@ class PluginController
     std::unique_ptr<ResourceFolderScanner> mResourceFolderScanner;
     /// Answers "getResourceThumbnails" and "saveResourceThumbnail": the browser's tone pictures.
     std::unique_ptr<ResourceThumbnailService> mResourceThumbnails;
+    /// Answers "browseUiBackgroundImage" and "clearUiBackgroundImage": the play page's own picture.
+    std::unique_ptr<UiBackgroundService> mUiBackground;
     /// Answers "measurePresetLevel" itself, rendering on a worker of its own. Shut down
     /// explicitly in the destructor, ahead of the resource library its graphs read.
     std::unique_ptr<PresetLevelMeter> mPresetLevelMeter;

@@ -22,6 +22,17 @@ Soundshed Guitar uses a token-driven, multi-theme design system built on CSS cus
 - `.theme-light` — Light theme (bright background, dark text, clean minimalist)
 - `.theme-dark` — Dark theme (dark background, light text, high contrast)
 - `.theme-classic` — Classic theme (warm brown background, cream text, vintage studio aesthetic)
+- `.theme-studio` — Studio theme, applied together with `.theme-light`: the light theme drawn as
+  current studio hardware (moulded plastic case and panels, 3D keys, soft shadows, rendered knobs, an LCD)
+- `.theme-studio-2003` — Studio 2003 theme, applied together with `.theme-light`: the light theme drawn
+  as used studio hardware (a worn steel case, brushed aluminium, rendered knobs and screws, an LCD)
+- `.theme-stage` — Stage theme, applied together with `.theme-dark`: flat neutral charcoal, near-square
+  corners, amber for what is selected or on, heavy grotesque type, and the effect panel floating over a
+  spot-lit wooden stage
+- `.theme-high-gain` — Eleven theme (its id is still `high-gain`), applied together with `.theme-dark`:
+  the dark theme drawn as a high-gain amp head (black diamond plate and tolex, rendered black knobs,
+  red only for what is lit, heavy condensed type, and the effect panel in front of a black grille with
+  valves glowing behind it)
 
 ### Semantic Color Roles
 

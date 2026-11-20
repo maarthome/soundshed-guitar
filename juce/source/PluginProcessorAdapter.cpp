@@ -817,11 +817,17 @@ juce::AudioProcessorEditor* PluginProcessorAdapter::createEditor()
 #endif
 
 #if SOUNDSHED_NANOQ_UI
-    // The spike build (-DSOUNDSHED_NANOQ_UI=ON): Nano Q's native UI instead of the WebView.
-    return new NanoQUiEditor(*this);
-#else
-    return new PluginEditor(*this);
+    // Experimental: Nano Q's native UI instead of the WebView, when chosen in Settings, perhaps
+    // from another instance's window since this one's was last open.
+    mController.CatchUpWithSharedSettings();
+
+    if (wantsNativeEditor())
+    {
+        return new NanoQUiEditor(*this);
+    }
 #endif
+
+    return new PluginEditor(*this);
 }
 
 bool PluginProcessorAdapter::hasEditor() const
@@ -1029,7 +1035,7 @@ void PluginProcessorAdapter::BrowseFileAsync(guitarfx::BrowseFileType type, cons
         filters = "*.json";
         break;
     case guitarfx::BrowseFileType::ImageFile:
-        filters = "*.png;*.jpg;*.jpeg;*.svg";
+        filters = "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg";
         break;
     case guitarfx::BrowseFileType::AudioFile:
         // FLAC/OGG are accepted here but our decoder only supports WAV/AIFF/MP3;
@@ -1346,6 +1352,12 @@ bool PluginProcessorAdapter::IsMessageThread() const
     return messageManager == nullptr || messageManager->isThisTheMessageThread();
 }
 
+bool PluginProcessorAdapter::RunsPostedTasks() const
+{
+    // callAsync drops what it is given when there is no message manager.
+    return juce::MessageManager::getInstanceWithoutCreating() != nullptr;
+}
+
 std::filesystem::path PluginProcessorAdapter::GetUserDataPath() const
 {
     // The shared profile, whichever product this is (ProfileFolder.h).
@@ -1425,6 +1437,32 @@ void PluginProcessorAdapter::setSystemStatsHandler(SystemStatsHandler handler)
 void PluginProcessorAdapter::setAudioTuningHandler(AudioTuningHandler handler)
 {
     mAudioTuningHandler = std::move(handler);
+}
+
+bool PluginProcessorAdapter::SupportsNativeEditor() const
+{
+#if SOUNDSHED_NANOQ_UI
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool PluginProcessorAdapter::wantsNativeEditor() const
+{
+    if (!SupportsNativeEditor())
+    {
+        return false;
+    }
+
+    const auto& settings = mController.GetAppSettings();
+    const auto it = settings.find(guitarfx::kNativeEditorSettingKey);
+    return it != settings.end() && it->is_boolean() && it->get<bool>();
+}
+
+void PluginProcessorAdapter::setEditorSwitchHandler(EditorSwitchHandler handler)
+{
+    mEditorSwitchHandler = std::move(handler);
 }
 
 void PluginProcessorAdapter::NotifyStateChanged()
@@ -1562,9 +1600,15 @@ void PluginProcessorAdapter::handleWebMessage(const juce::String& message)
 {
     // Handle openUrl locally — open in the system default browser.
     const auto parsed = juce::JSON::parse(message);
+    bool editorChoiceChanged = false;
 
     if (auto* obj = parsed.getDynamicObject(); obj != nullptr)
     {
+        // Stored by the controller like any setting (below); the window, if it is ours, then
+        // swaps the editor.
+        editorChoiceChanged = obj->getProperty("type").toString() == "setSetting" &&
+                              obj->getProperty("key").toString() == guitarfx::kNativeEditorSettingKey;
+
         const auto typeId = juce::Identifier{"type"};
         const auto urlId = juce::Identifier{"url"};
 
@@ -1639,6 +1683,11 @@ void PluginProcessorAdapter::handleWebMessage(const juce::String& message)
     }
 
     mController.HandleUIMessage(message.toStdString());
+
+    if (editorChoiceChanged && mEditorSwitchHandler)
+    {
+        mEditorSwitchHandler();
+    }
 }
 
 void PluginProcessorAdapter::sendMessageToUI(const juce::String& message)
@@ -1704,6 +1753,18 @@ std::filesystem::path PluginProcessorAdapter::locateAssetsRoot() const
         candidates.push_back(exeDir / "resources");
         candidates.push_back(exeDir / "Resources");
     }
+
+#if JUCE_WINDOWS
+    const auto commonDataDir = juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
+                                   .getChildFile(PRODUCT_NAME_WITHOUT_VERSION);
+    const auto sharedResources = soundshed::toStdPath(commonDataDir.getChildFile("resources"));
+
+    if (!sharedResources.empty())
+    {
+        candidates.push_back(sharedResources);
+    }
+
+#endif
 
     return guitarfx::ui::ResolveResourceRoot(candidates);
 }

@@ -3,6 +3,7 @@
  * alongside it.
  */
 
+import { applyVisualizerBackground } from "../visualizerBackground.js";
 import { applyAutomationState } from "../automationPanel.js";
 import { renderBlendList } from "../blendManager.js";
 import { recordAppSetting, replaceAppSettings } from "../appSettingsStore.js";
@@ -35,7 +36,7 @@ import { applyMonoOutputUnityInstance } from "../settings/monoOutputUnity.js";
 import { applyEnginePresetDirty, clonePreset, setActivePresetDraft, setActivePresetIsNew, setActivePresetSnapshot, uiState } from "../state.js";
 import { replaceMixerState } from "../mixerStore.js";
 import { cachePreset, putLibraryPresetFirst, setActivePresetId, setActivePresetSceneId, setPresetLoadingId, showAllLibraryPresets } from "../presetLibraryStore.js";
-import { themeSwitcher } from "../theme-switcher.js";
+import { normalizeThemeName, themeSwitcher } from "../theme-switcher.js";
 import { applyToneSharingAppSettings } from "../toneSharingPanel.js";
 import type { AppSettings, AppSettingValue, AutomationSlot, BlendLibrary, CustomEffectLibrary, GlobalSignalChainConfig, MixerPresetState, MixerState, Preset, PresetArchiveSessionState, ResourceLibrary, RiffLibrary, UiSettings, UiViewState } from "../types.js";
 import { triggerUpdateCheck } from "../updateCheck.js";
@@ -91,6 +92,7 @@ export function onState(payload: IncomingPayload): void {
   if (appSettings) {
     replaceAppSettings(appSettings as AppSettings);
     applyDensityAppSettings(appSettings);
+    applyVisualizerBackground();
     applyStoredDemoAudioSelection();
     applyToneSharingAppSettings(appSettings);
     applyJamAppSettings();
@@ -115,11 +117,12 @@ export function onState(payload: IncomingPayload): void {
     replaceNavigationViewState(uiViewState);
     applyUiViewState(uiViewState);
   }
-  const environment = (payload as { environment?: { standalone?: boolean; audioDeviceSettings?: boolean; version?: string; os?: string; cpu?: string } }).environment;
+  const environment = (payload as { environment?: { standalone?: boolean; audioDeviceSettings?: boolean; nativeEditor?: boolean; version?: string; os?: string; cpu?: string } }).environment;
   if (environment) {
     applyEnvironmentState({
       standalone: Boolean(environment.standalone),
       audioDeviceSettings: environment.audioDeviceSettings === true,
+      nativeEditor: environment.nativeEditor === true,
       version: environment.version ?? uiState.environment?.version,
       os: environment.os ?? uiState.environment?.os,
       cpu: environment.cpu ?? uiState.environment?.cpu
@@ -294,6 +297,7 @@ export function onAppInfo(payload: IncomingPayload): void {
   applyEnvironmentState({
     standalone: uiState.environment?.standalone ?? false,
     audioDeviceSettings: uiState.environment?.audioDeviceSettings ?? false,
+    nativeEditor: uiState.environment?.nativeEditor ?? false,
     version: infoPayload.version ?? uiState.environment?.version,
     os: infoPayload.os ?? uiState.environment?.os,
     cpu: infoPayload.cpu ?? uiState.environment?.cpu,
@@ -302,9 +306,8 @@ export function onAppInfo(payload: IncomingPayload): void {
 }
 
 export function onTheme(payload: IncomingPayload): void {
-  const themePayload = payload as { theme?: string };
-  const theme = themePayload.theme === "light" || themePayload.theme === "classic" ? themePayload.theme : "dark";
-  themeSwitcher.applyTheme(theme);
+  const themePayload = payload as { theme?: unknown };
+  themeSwitcher.applyTheme(normalizeThemeName(themePayload.theme));
 }
 
 export function onInputModeChanged(payload: IncomingPayload): void {

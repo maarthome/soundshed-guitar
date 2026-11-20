@@ -22,6 +22,11 @@
 
 namespace guitarfx
 {
+/// The app setting that picks the editor where the host can build either (SupportsNativeEditor):
+/// true for the native UI (Nano Q's, drawn with Elements), false or missing for the WebView. Both
+/// UIs write it with "setSetting"; the host reads it when it next builds an editor.
+inline constexpr const char* kNativeEditorSettingKey = "ui.nativeEditor";
+
 /// Categories for file browse dialogs.
 enum class BrowseFileType
 {
@@ -81,6 +86,14 @@ class IPluginHost
         return true;
     }
 
+    /// False when nothing will ever run what RunOnMainThread() is given: a plugin wrapper
+    /// running with no message loop drops it. The controller then does that work itself where
+    /// it can rather than wait for it (see PluginController::Prepare).
+    [[nodiscard]] virtual bool RunsPostedTasks() const
+    {
+        return true;
+    }
+
     // ── Platform paths ─────────────────────────────────────────────
     /// Root directory for user data (~/.guitarfx/ or platform equivalent).
     [[nodiscard]] virtual std::filesystem::path GetUserDataPath() const = 0;
@@ -112,6 +125,13 @@ class IPluginHost
     /// Message thread. See docs/user-interface.md for the actions.
     virtual void HandleAudioDeviceRequest(const std::string& /*requestJson*/)
     {
+    }
+
+    /// True where the host can build either editor, the WebView or the native UI, and picks one
+    /// by kNativeEditorSettingKey. Settings then shows the switch between them (experimental).
+    [[nodiscard]] virtual bool SupportsNativeEditor() const
+    {
+        return false;
     }
 
     /// Notify host that plugin state has changed (marks DAW project dirty).

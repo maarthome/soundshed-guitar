@@ -1,0 +1,170 @@
+/* ===== Studio 2003 Theme =====
+ * A light theme drawn as hardware: a used piece of digital studio gear with analogue
+ * controls. A worn satin-steel case, brushed aluminium rails, panel screws, a backlit LCD
+ * for the preset name and rendered knobs.
+ *
+ * The body carries .theme-light as well as .theme-studio-2003 (ts/theme-switcher.ts), so every
+ * light-theme rule in the other stylesheets still applies and the theme only restyles what
+ * makes it hardware. This file is its palette, the tokens (which the native UI reads too);
+ * studio-2003-skin.css draws the surfaces, then the controls (knobs, switches, keys, the LCD,
+ * meters).
+ *
+ * The images are rendered by tools/studio-theme-assets/generate.py. One light, above and a
+ * little to the left, is assumed throughout: highlights on top edges, shadows falling down
+ * and slightly right.
+ */
+
+.theme-studio-2003 {
+  /* Signal orange, the colour of an indicator lens. */
+  --color-accent: #a83c16;
+  --color-accent-hover: #bd4a1e;
+  --color-accent-dark: #8a2f10;
+  --color-accent-rgb: 168, 60, 22;
+
+  /* Satin steel, a little warm with age; raised parts a step paler, wells a step deeper. */
+  --bg-primary: #c9c8c3;
+  --bg-secondary: #cdccc7;
+  --bg-tertiary: #bfbdb7;
+  --bg-surface: #d6d5d0;
+  --bg-elevated: #dfded9;
+
+  --bg-panel: #bcbab4;
+  --bg-card: #dad9d4;
+  --bg-input: #e8e7e2;
+
+  --bg-footer: var(--bg-secondary);
+
+  --bg-fx-primary: #bfbdb7;
+  --bg-fx-secondary: #c9c8c3;
+  --bg-fx-categories: #bcbab4;
+
+  /* Silk-screen ink. Muted is 4.8:1 on the deepest well (#bcbab4). */
+  --text-primary: #1b1a18;
+  --text-secondary: #363431;
+  --text-tertiary: #42403b;
+  --text-muted: #4a4741;
+
+  --border-light: #b2b0aa;
+  --border-medium: #a09e97;
+  --border-strong: #8a8881;
+  --border-dark: #75736c;
+  --border-darker: #605e58;
+
+  /* The value ring: a channel milled round the knob, lit from the accent. */
+  --control-bg: #dfded9;
+  --control-knob-bg: #2a2a2c;
+  --control-border: #18181a;
+  --control-indicator: #f6f3ea;
+  --knob-ring-color: #d2541c;
+  --knob-ring-start: #b8431a;
+  --knob-ring-end: #ee7a2c;
+  --knob-ring-track: rgba(54, 46, 30, 0.2);
+
+  --toggle-bg: #3a3833;
+  --toggle-border: #1f1e1b;
+
+  --shadow-sm: 0 1px 2px rgba(44, 36, 20, 0.22);
+  --shadow-md: 1px 4px 10px rgba(44, 36, 20, 0.24);
+  --shadow-lg: 2px 8px 22px rgba(44, 36, 20, 0.28);
+  --shadow-xl: 3px 16px 38px rgba(44, 36, 20, 0.34);
+
+  --bg-browser-shell: rgba(205, 204, 199, 0.97);
+  --bg-browser-header: rgba(210, 209, 204, 0.98);
+  --bg-browser-sidebar: rgba(191, 189, 183, 0.97);
+  --bg-browser-card: rgba(218, 217, 212, 0.97);
+  --bg-browser-input: rgba(232, 231, 226, 0.98);
+  --bg-browser-hover: rgba(168, 60, 22, 0.08);
+  --bg-browser-selected: rgba(168, 60, 22, 0.14);
+  --border-browser: rgba(160, 158, 151, 0.9);
+  --border-browser-strong: rgba(138, 136, 129, 0.95);
+
+  --bg-control: #bfbdb7;
+  --button-bg: #dfded9;
+  --button-text: #1b1a18;
+  --button-border: #8a8881;
+  --button-bg-hover: #e9e8e4;
+  --button-border-hover: #75736c;
+
+  --modal-bg: #d1d0cb;
+  --modal-bg-raised: #dad9d4;
+  --modal-text: #1b1a18;
+  --modal-text-secondary: #363431;
+  --modal-text-muted: #4a4741;
+  --modal-border: #a09e97;
+  --modal-border-medium: #8a8881;
+  --modal-close-hover: rgba(40, 36, 28, 0.1);
+  --modal-input-bg: #e8e7e2;
+  --modal-input-text: #1b1a18;
+  --modal-input-border: #8a8881;
+  --modal-input-placeholder: #67645e;
+
+  --eq-curve-grid: rgba(29, 27, 23, 0.14);
+  --eq-curve-response: rgba(168, 60, 22, 0.96);
+  --eq-curve-handle-stroke: rgba(29, 27, 23, 0.85);
+  --eq-curve-spectrum-fill-top: rgba(66, 62, 54, 0.22);
+  --eq-curve-spectrum-fill-bottom: rgba(70, 62, 44, 0.03);
+  --eq-curve-spectrum-line: rgba(70, 62, 44, 0.4);
+
+  --performance-plot-line: rgba(168, 60, 22, 0.96);
+  --performance-plot-fill: rgba(168, 60, 22, 0.14);
+  --performance-plot-grid: rgba(120, 112, 94, 0.42);
+
+  --sb-track: var(--bg-tertiary);
+  --sb-thumb: var(--border-strong);
+  --sb-thumb-hover: var(--border-darker);
+
+  /* A well pressed into the plate: dark inside its top edge, a lit lip under its foot. */
+  --panel-inset-bg: linear-gradient(180deg, rgba(60, 50, 30, 0.11) 0%, rgba(60, 50, 30, 0.05) 100%);
+  --panel-inset-border: rgba(48, 40, 24, 0.3);
+  --panel-inset-shadow:
+    inset 0 2px 4px rgba(44, 36, 20, 0.22),
+    inset 0 1px 1px rgba(44, 36, 20, 0.16),
+    0 1px 0 rgba(255, 252, 244, 0.75);
+
+  /* Shared pieces of the look, used by both studio stylesheets. */
+  /* The case (worn satin steel) and the rails (brushed aluminium). Both images are made at
+     twice the size they are drawn, so their grain stays finer than a pixel. */
+  --studio-plate: url("../../images/themes/studio-2003/casing.jpg");
+  --studio-plate-size: 256px 256px;
+  --studio-brushed: url("../../images/themes/studio-2003/brushed.jpg");
+  --studio-brushed-size: 512px 128px;
+  --studio-wear: url("../../images/themes/studio-2003/wear.png");
+  --studio-wear-size: 640px 640px;
+  --studio-screw-a: url("../../images/themes/studio-2003/screw-a.png");
+  --studio-screw-b: url("../../images/themes/studio-2003/screw-b.png");
+  --studio-screw-size: 13px 13px;
+  --studio-edge-light: rgba(255, 252, 244, 0.8);
+  --studio-edge-dark: rgba(44, 36, 20, 0.36);
+  --studio-ink: #2a2824;
+  --studio-rail: #d2d3d3;
+  /* The rails' own ink: neutral, since they are bare metal rather than paint. */
+  --studio-rail-ink: #2a2c2f;
+  --studio-rail-ink-soft: #4b4e52;
+
+  /* The chain's node blocks (css/signal-path/nodes.css): the case's steel, lit from the
+     upper left, so the shadow falls a little to the right. */
+  --node-face: var(--bg-card);
+  --node-sheen: rgb(255 255 255 / 0.55);
+  --node-edge-light: rgb(255 255 255 / 0.9);
+  --node-wall: #a3a19a;
+  --node-wall-edge: rgb(44 36 20 / 0.3);
+  --node-shadow: rgb(44 36 20 / 0.34);
+  --node-shadow-x: 2px;
+
+  --window-border: #8f9193;
+
+  /* Component tokens: read by the component sheets, which fall back to the base look. */
+  --effect-shell-title-ink: var(--studio-ink);
+  --effect-shell-subtitle-ink: var(--text-muted);
+  --eq-visualizer-bg: #c6c5bf;
+  --eq-canvas-bg: #c6c5bf;
+  --toast-bg: var(--bg-elevated);
+  --toast-border: var(--border-strong);
+  --add-trigger-ink: var(--studio-ink);
+  --preset-name-ink-hover: var(--studio-lcd-ink);
+  --preset-status-bg: rgba(20, 30, 10, 0.16);
+  --parallel-bg: rgba(44, 36, 20, 0.05);
+  --parallel-border: rgba(48, 40, 24, 0.22);
+  --effect-shell-value-ink: var(--text-secondary);
+  --resource-key-bg: var(--bg-input);
+}

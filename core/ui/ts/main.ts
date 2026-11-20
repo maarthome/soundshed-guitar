@@ -30,7 +30,8 @@ import { initFxSelector, refreshFxSelector } from "./fxSelector.js";
 import { themeSwitcher } from "./theme-switcher.js";
 import { startUiSettingsTracking } from "./windowSettings.js";
 import { renderFooterDemoAudio } from "./demoAudio.js";
-import { initDensitySelect, initDiagnosticsToggle, initThemeSelect, initZoomControls, initUserInputCalibrationControls } from "./settings.js";
+import { initDensitySelect, initDiagnosticsToggle, initZoomControls, initUserInputCalibrationControls } from "./settings.js";
+import { initThemeFlyout } from "./themeFlyout.js";
 import { postMessage, requestLooperState } from "./bridge.js";
 import { initSystemStats } from "./systemStats.js";
 import { initWindowChrome } from "./windowChrome.js";
@@ -49,6 +50,8 @@ import { initializeCustomEffectDesignerModal } from "./customEffectDesigner.js";
 import { initializeDialogModals } from "./dialogs.js";
 import { initializeModalEscape } from "./modalEscape.js";
 import { activateTab, initCompactStageDestinations, initCompactStagePersistence, initializeControlBarTabs, initializeIconBarTabs, initializePlayFooterPadsToggle, initializeTabButtons, switchMainPanel, initControlBarCollapse, initSignalPathCollapse } from "./navigation.js";
+// Loaded for its registration: navigation opens the Tones panel through tonesPanelLink.ts.
+import "./tonesPanel.js";
 import { handleDroppedRiffAudioFiles, initializeRiffLibraryPanel } from "./riffLibrary.js";
 import { initializePracticeToolPanel, setPracticeToolPresetRecaller } from "./practiceTool.js";
 import { initializeGlobalFileDrop, registerGlobalFileDropHandler } from "./fileDrop.js";
@@ -165,6 +168,10 @@ function initFooterActionsPopup(): void {
     if (target && footer.contains(target)) {
       return;
     }
+    // A flyout the footer opened but hung from the body (the theme flyout) is still the footer.
+    if (target instanceof Element && target.closest("[data-footer-popover]")) {
+      return;
+    }
     setOpen(false);
   });
 
@@ -231,7 +238,7 @@ async function bootstrap(): Promise<void> {
   // Initialize theme switcher
   void themeSwitcher; // Ensure the singleton is constructed
   console.log("[JS] Theme switcher initialized:", themeSwitcher.getCurrentTheme());
-  initThemeSelect();
+  initThemeFlyout();
   initZoomControls();
   initDensitySelect();
   

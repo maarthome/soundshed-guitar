@@ -110,6 +110,7 @@
   <link rel="stylesheet" href="css/flyout-params.css" />
   <link rel="stylesheet" href="css/pickup-match-global.css" />
   <link rel="stylesheet" href="css/input-mode.css" />
+  <link rel="stylesheet" href="css/theme-flyout.css" />
   <link rel="stylesheet" href="css/vu-meter.css" />
   <link rel="stylesheet" href="css/dsp-status.css" />
   <link rel="stylesheet" href="css/navigation.css" />
@@ -133,6 +134,7 @@
   <link rel="stylesheet" href="css/signal-path/resource-picker.css" />
   <link rel="stylesheet" href="css/signal-path/resource-slots.css" />
   <link rel="stylesheet" href="css/signal-path/ir-slot-list.css" />
+  <link rel="stylesheet" href="css/signal-path/ir-ab.css" />
   <link rel="stylesheet" href="css/signal-path/ir-alignment.css" />
   <link rel="stylesheet" href="css/signal-path/blend.css" />
   <link rel="stylesheet" href="css/signal-path/plugin-list.css" />
@@ -175,6 +177,9 @@
   <link rel="stylesheet" href="css/tone-sharing.css" />
   <link rel="stylesheet" href="css/tone-sharing-admin.css" />
   <link rel="stylesheet" href="css/tone-sharing-list.css" />
+  <!-- The Tones panel's tab strip, Local Presets and Tone 3000 tabs. After settings.css
+       and tone-sharing.css, whose rules it lays out afresh. -->
+  <link rel="stylesheet" href="css/tones.css" />
   <link rel="stylesheet" href="css/jam.css" />
   <!-- Practice Tool is a Jam-panel section; its rules were split out of
        jam.css and must stay immediately after it to keep the cascade. -->
@@ -185,10 +190,15 @@
   <link rel="stylesheet" href="css/scale-guide-listen.css" />
   <link rel="stylesheet" href="css/scale-guide-arpeggio.css" />
   <link rel="stylesheet" href="css/waveform.css" />
-  <link rel="stylesheet" href="css/themes/light.css" />
-  <link rel="stylesheet" href="css/themes/dark.css" />
-  <link rel="stylesheet" href="css/themes/classic.css" />
+  <!-- The themes' stylesheets, written in from ts/themes.ts by scripts/assemble-html.js:
+       first the palettes (light, dark, vintage), then grain.css, then the themes built on a
+       palette (the body carries both classes), which replace grain.css's texture. -->
+  <!--#theme-palettes-->
   <link rel="stylesheet" href="css/grain.css" />
+  <!--#theme-variants-->
+  <!-- The player's own effect-panel background replaces any theme's backdrop, so it
+       comes after them all (ts/visualizerBackground.ts). -->
+  <link rel="stylesheet" href="css/custom-background.css" />
   <!-- Compact density. Last in the cascade because every rule here is a layout
        override of a sheet above it, keyed off html[data-density="compact"];
        anything they tint uses theme tokens, so the themes are untouched. Order

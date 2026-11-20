@@ -1,0 +1,203 @@
+/* ===== Stage Theme =====
+ * A dark theme for a rig set up on a stage: flat charcoal bars and panels with crisp,
+ * near-square corners, one warm amber for whatever is selected or on, and the effect being
+ * edited standing in a pool of light on a wooden floor (images/themes/stage/stage.jpg,
+ * rendered by tools/stage-theme-assets/stage.py).
+ *
+ * The body carries .theme-dark as well as .theme-stage (ts/theme-switcher.ts), so every
+ * dark-theme rule in the other stylesheets still applies and the theme only restyles what
+ * makes it Stage. This file is its palette, the tokens (which the native UI reads too);
+ * stage-skin.css is the rest of its look. Both load after dark.css and grain.css.
+ *
+ * The rules of the look:
+ *  - Neutral greys, no blue in them: the bars are near black, panels a step lighter.
+ *  - Amber marks a choice, not decoration: the selected chain block is filled with it, a
+ *    latched key is outlined in it, a value arc is drawn in it.
+ *  - Everything is flat. Depth comes from the stage behind the effect, not from bevels.
+ *  - Type is solid and sure of itself: the grotesque Archivo for the whole UI, set heavy for
+ *    what names something (tabs, legends, the chain's blocks, the effect's title).
+ */
+
+.theme-stage {
+  --stage-font-ui: "Archivo", "Inter", system-ui, sans-serif;
+
+  --color-accent: #f2a73b;
+  --color-accent-hover: #f7b95c;
+  --color-accent-dark: #c9851f;
+  --color-accent-rgb: 242, 167, 59;
+  --color-primary: #f2a73b;
+  --accent-primary: var(--color-accent);
+  --toggle-active: var(--color-accent);
+
+  /* Charcoal, neutral. */
+  --bg-primary: #141414;
+  --bg-secondary: #1c1c1c;
+  --bg-tertiary: #222222;
+  --bg-surface: #282828;
+  --bg-elevated: #2e2e2e;
+
+  --bg-panel: #1f1f1f;
+  --bg-card: #2a2a2a;
+  --bg-input: #161616;
+
+  --bg-dark-primary: #141414;
+  --bg-dark-secondary: #1c1c1c;
+  --bg-dark-tertiary: #202020;
+  --bg-dark-surface: #282828;
+
+  --bg-footer: #1a1a1a;
+  --bg-header-dark: #121212;
+
+  --bg-fx-primary: #121212;
+  --bg-fx-secondary: #1a1a1a;
+  --bg-fx-categories: #0e0e0e;
+
+  /* Text: white for names and values, greys for legends. Muted is 6.1:1 on #222. */
+  --text-primary: #eeeeee;
+  --text-secondary: #cfcfcf;
+  --text-tertiary: #aeaeae;
+  --text-muted: #a2a2a2;
+
+  --text-dark-primary: #f2f2f2;
+  --text-dark-secondary: #d4d4d4;
+  --text-dark-tertiary: #c2c2c2;
+  --text-dark-muted: #b2b2b2;
+  --text-dark-dimmed: #9a9a9a;
+  --text-dark-disabled: #7a7a7a;
+
+  --border-light: #333333;
+  --border-medium: #2c2c2c;
+  --border-strong: #242424;
+  --border-dark: #101010;
+  --border-darker: #0a0a0a;
+
+  --border-dark-light: #474747;
+  --border-dark-medium: #3a3a3a;
+  --border-dark-strong: #585858;
+
+  --window-border: #3c3c3c;
+
+  /* Square it up: a couple of pixels on everything that uses the scale. */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 5px;
+  --radius-2xl: 6px;
+
+  /* Knobs: a black disc inside a thin amber arc on a dark track. */
+  --control-bg: #303030;
+  --control-knob-bg: #151515;
+  --control-border: #050505;
+  --control-indicator: #f2f2f2;
+  --knob-border-highlight: rgba(255, 255, 255, 0.07);
+  --knob-border-shadow: rgba(0, 0, 0, 0.6);
+  --knob-ring-color: #f2a73b;
+  --knob-ring-start: #f2a73b;
+  --knob-ring-end: #f2a73b;
+  --knob-ring-track: #3a3a3a;
+
+  --toggle-bg: #3a3a3a;
+  --toggle-border: #4a4a4a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 6px 18px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 12px 36px rgba(0, 0, 0, 0.7);
+
+  --color-preset-bg: #262320;
+  --color-preset-border: #3d3528;
+  --color-preset-text: #e6d7c0;
+  --amp-glow: radial-gradient(ellipse, rgba(242, 167, 59, 0.35) 0%, transparent 70%);
+
+  --bg-browser-shell: rgba(22, 22, 22, 0.94);
+  --bg-browser-header: rgba(30, 30, 30, 0.96);
+  --bg-browser-sidebar: rgba(26, 26, 26, 0.94);
+  --bg-browser-card: rgba(44, 44, 44, 0.9);
+  --bg-browser-input: rgba(20, 20, 20, 0.96);
+  --bg-browser-hover: rgba(255, 255, 255, 0.07);
+  --bg-browser-selected: rgba(242, 167, 59, 0.16);
+  --border-browser: rgba(80, 80, 80, 0.6);
+  --border-browser-strong: rgba(110, 110, 110, 0.75);
+
+  /* Keys: flat dark caps with a hairline edge. */
+  --bg-control: #262626;
+  --button-bg: #303030;
+  --button-text: #e6e6e6;
+  --button-border: #424242;
+  --button-bg-hover: #393939;
+  --button-border-hover: #5a5a5a;
+
+  --modal-bg: #1e1e1e;
+  --modal-bg-raised: #262626;
+  --modal-text: #f0f0f0;
+  --modal-text-secondary: #d0d0d0;
+  --modal-text-muted: #ababab;
+  --modal-border: #3c3c3c;
+  --modal-border-medium: #333333;
+  --modal-close-hover: rgba(255, 255, 255, 0.08);
+  --modal-input-bg: #161616;
+  --modal-input-text: #f0f0f0;
+  --modal-input-border: #3a3a3a;
+  --modal-input-placeholder: #8c8c8c;
+
+  --eq-curve-grid: rgba(255, 255, 255, 0.07);
+  --eq-curve-response: rgba(242, 167, 59, 0.95);
+  --eq-curve-handle-stroke: rgba(255, 255, 255, 0.9);
+  --eq-curve-spectrum-fill-top: rgba(220, 220, 220, 0.16);
+  --eq-curve-spectrum-fill-bottom: rgba(220, 220, 220, 0.02);
+  --eq-curve-spectrum-line: rgba(230, 230, 230, 0.3);
+
+  --performance-plot-line: rgba(242, 167, 59, 0.95);
+  --performance-plot-fill: rgba(242, 167, 59, 0.14);
+  --performance-plot-grid: rgba(255, 255, 255, 0.12);
+
+  --sb-track: #181818;
+  --sb-track-border: #2a2a2a;
+  --sb-thumb: #3a3a3a;
+  --sb-thumb-border: #474747;
+  --sb-thumb-hover: #4c4c4c;
+  --sb-thumb-hover-border: #5a5a5a;
+
+  /* The chain's blocks (css/signal-path/nodes.css): flat grey caps. */
+  --node-face: #303030;
+  --node-sheen: rgb(255 255 255 / 0.03);
+  --node-edge-light: rgb(255 255 255 / 0.06);
+  --node-wall: #161616;
+  --node-wall-edge: rgb(0 0 0 / 0.6);
+  --node-shadow: rgb(0 0 0 / 0.6);
+
+  /* Shared pieces of the look. */
+  --stage-amber: #f2a73b;
+  --stage-on-amber: #191512;
+  --stage-hairline: #3e3e3e;
+  --stage-bar: #1b1b1b;
+  --stage-bar-raised: #222222;
+  --stage-card: rgb(30 30 30 / 0.94);
+
+  /* Component tokens: read by the component sheets, which fall back to the base look. */
+  --nav-tab-ink: #9c9c9c;
+  --nav-tab-ink-hover: #e2e2e2;
+  --nav-tab-active-ink: var(--stage-amber);
+  --nav-tab-active-line: var(--stage-amber);
+  --effect-shell-title-ink: #f2f2f2;
+  --effect-shell-subtitle-ink: #a8a8a8;
+  --eq-visualizer-bg: #141414;
+  --eq-canvas-bg: #141414;
+  --fx-header-bg: var(--modal-bg-raised);
+  --toast-bg: var(--bg-elevated);
+  --toast-border: var(--stage-hairline);
+  --add-trigger-border: #4a4a4a;
+  --add-trigger-bg: #2c2c2c;
+  --preset-display-bg: #121212;
+  --preset-name-ink-hover: #f4f4f4;
+  --parallel-bg: rgba(255, 255, 255, 0.02);
+  --parallel-border: #2e2e2e;
+  --effect-panel-bg: var(--stage-card);
+}
+
+/* ===== The effect panel's own colours, without the dark theme's blue in them ===== */
+.theme-stage {
+  --panel-inset-bg: #181818;
+  --panel-inset-border: #2e2e2e;
+  --panel-inset-shadow: none;
+}

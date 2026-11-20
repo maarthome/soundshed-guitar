@@ -116,6 +116,7 @@ keeps the existing Library/Folder behavior.
 | `resourceDeleteFailed` | `{message, detail, resourceType?, id?, usageKind?, usageName?, presetName?, blendName?}` | A resource delete was refused. When `message` is `Resource is in use`, `detail` names the first thing that still uses it (`Used by preset: …`, `Used by effect preset: …`, `Used by blend: …`, `Used by composite: …`, `Used by custom effect: …`, `Used by global chain: pre-chain`), `usageKind` is `preset`, `effectPreset`, `blend`, `composite`, `customEffect` or `globalChain`, and `usageName` is its name. `presetName`/`blendName` repeat it for those two kinds. Presets are checked everywhere they live: the running one, other Multi-Rig slots (saved or not), and stored ones, read fresh |
 | `resourceUsageInfo` | `{resourceType, id, inUse, usageKind, usageName, detail, presetName, blendName}` | Answer to `queryResourceUsage`: the same check and fields as a refused delete, empty strings when unused. `inUse` counts a model a blend plays, since presets store only a blend node's `blendId`. Stored presets and effect presets come from a cached index here, since it is asked once per row; the delete re-checks them fresh |
 | `resourceThumbnails` | `{resourceType, requestId?, thumbnails: {resourceId: key}, files: {key: {file, path}}, fetch: {key: {url, imageUrl}}, lookup: [{toneId, title, resourceIds}]}` | Answer to `getResourceThumbnails`: the Tone3000 tone picture each asked resource shows, by a key every resource of the tone shares. `files` are in the engine's cache (`<profile>/data/v1/cache/resource-thumbnails`), loaded by the web UI from `resource-thumbnails/<file>` (the editor's resource route) and by a native UI from `path`. `fetch` is a picture the cache lacks: download `url` (Tone3000's storage serves a 96 px copy) and send it back with `saveResourceThumbnail`. `lookup` is a tone with no recorded picture: search Soundshed's Tone3000 relay by `title`, take the tone with `toneId`, and send what was found (or `imageUrl: ""`). Resources with no known picture are left out. The UIs make at most 12 lookups a session, one at a time, and fetch only while the Tone3000 feature is on |
+| `uiBackgroundImageSelected` | `{url}` | Answer to `browseUiBackgroundImage`: the picture the player chose was copied into `<profile>/data/v1/ui-backgrounds` (named by a hash of its bytes, the folder's only file) and is loaded by the web UI from `url`, `ui-backgrounds/<16 hex>.<png|jpg|gif|webp>` (the editor's resource route). The UI stores `url` in the app setting `ui.visualizerBackground.image`. Not sent when the dialog is cancelled; a file that is not a PNG, JPEG, GIF or WebP of at most 32 MB is reported with `error` |
 | `resourceFileContentHash` | `{path, resourceType, contentHash, error?}` | Answer to `hashResourceFile`: the file's content hash (`nam-content-v1:` or `ir-content-v1:` and 64 hex digits, as `metadata.contentHash` on library rows), or `""` with an `error` when the file is missing, unreadable, not a NAM capture or WAV, or the type is neither `nam` nor `ir` |
 | `blendExportSaved` | `{path}` | A blend `.namz` archive was written |
 | `blendExportFailed` | `{message}` | A blend archive export failed or was cancelled |
@@ -290,6 +291,8 @@ keeps the existing Library/Folder behavior.
 | `getResourceThumbnails` | `{resourceType: "nam"|"ir", resourceIds?, requestId?}` | Which tone picture each library resource of the type shows (all of them without `resourceIds`): answered by `resourceThumbnails`. Only resources from Tone3000 (provider `tone3000`, a `tone3000:` id, or a `toneId`) have one: the `imageUrl` the import recorded, another resource of the same tone's, or one a lookup found. Changes nothing |
 | `hashResourceFile` | `{path, resourceType: "nam"|"ir"}` | Works out a file's content hash (core/src/models/ContentHash.h) on a worker thread, for the Folder tab's "Find on Tone3000" on a file the library does not have: answered by `resourceFileContentHash`. The folder scan does not hash its files. Changes nothing |
 | `saveResourceThumbnail` | `{imageUrl, data?, toneId?}` | Keeps what a UI fetched for `resourceThumbnails`: `data` (base64) is the thumbnail of `imageUrl`, stored in the cache when it is a JPEG, PNG, WebP or GIF of at most 512 KB; `toneId` records a lookup's result, `imageUrl` the tone's picture or empty for none (a tone found to have none is looked up again after 30 days). Not answered; the resource library is not changed |
+| `browseUiBackgroundImage` | `{}` | Opens a file dialog for the play page's own background picture (Settings → UI → Effect Panel Background): answered by `uiBackgroundImageSelected`. Picking one removes the one before |
+| `clearUiBackgroundImage` | `{}` | Removes the stored background picture. The UI clears `ui.visualizerBackground.image` itself. Not answered |
 | `importPresetArchiveFile` | `{requestId?, path?}` | Import a preset archive file (`.soundshed.preset`, `.soundshed.presets` or a pack's `.zip`) as the web UI's Import Preset does: the file at `path`, or one the user picks in a file dialog when there is no `path` (nothing happens if they cancel). It is installed as `installPresetArchives` installs a download, under the entry id `requestId` (minted as `zip-<ms>` when absent) with `source: "zipImport"`, its presets in a folder named after the file. Answered by `presetArchivesInstalled` or `presetArchivesInstallFailed`. Nano Q sends it from the preset menu and for an archive dropped on the window; the web UI reads the archive itself |
 | `installPresetArchives` | `{requestId?, entry: {id, title?, source?, packId?, archiveFileName?}, folder?, archives: [{title?, data, itemId?}], allowMissingRemote?, fetchedResources?: [{type, id}]}` | Install tones downloaded from tone sharing (both UIs' Tones panels send it): each `data` is a base64 zip in the web UI's archive format (`preset.json` or `presets.json` plus `resources/<file>`). Models and IRs go into the library (one it already holds, by content hash, is reused), blends get new ids, and the presets are saved under new user ids without replacing the running preset; a one-preset archive's preset takes the archive's `title`. With `folder`, the presets also get a top-level folder of that name (`tone-sharing::<packId>`); an archive's own `presetFolders` are rebuilt as subfolders of it, and the presets in none of them sit in it directly. The install is recorded under `entry.id` in the `toneSharing.installedPacks` app setting, in the web UI's schema (with `entry.archiveFileName` when given) plus the `blends` it added and, for archives that give their tone sharing `itemId`, `presetItems` (preset id to item id: which item a pack's preset came from, so a favourite or rating of it reaches the service), and announced with `appSettingChanged`, `presetList` and, with a folder, `presetFolders`. A model or IR the archive names rather than carries (its `remoteResources`, from any provider, or the older `tone3000Resources` list) must already be in the library, matched by library id, then provider and provider key, then content hash; with `allowMissingRemote` one that is not leaves its slot empty and is named in the reply (the web UI sets it after trying to fetch them). `fetchedResources` are the library resources the UI imported for this install just before sending it (the models it fetched): those the library holds are recorded with the install, so removing it removes them. Every archive is read and every remote reference resolved against the library before anything is written. Answered by `presetArchivesInstalled` or `presetArchivesInstallFailed` |
 | `deleteInstalledPresetArchive` | `{id}` | Take an install out again: its presets (and them out of folders, favourites and ratings, dropping a folder they leave empty, or leave with only emptied subfolders), the blends it added that no preset uses, and the models and IRs it added that no remaining preset or blend uses, then its `toneSharing.installedPacks` entry. Answered by `installedPresetArchiveDeleted`, with the new `presetList`, `presetFolders`, `presetFavorites`, `presetRatings` and `appSettingChanged`; an id with no install is reported with an `error` and still answered. The running preset keeps playing; the web UI loads another when it was one of them |
@@ -623,7 +626,7 @@ on `<html>`; every rule in `css/compact/` keys off those attributes. The pre-pai
   (`#nav-rail-tuner-btn`, `#nav-rail-looper-btn`; the Looper lights while its strip is open),
   and the bar shows neither; held upright (no rail) the footer has both. What does not fit is
   in the sheet. The sheet's rows are labelled (Chain, Demo audio, MIDI, Tap tempo, Metronome,
-  Click, Theme, Layout; the zoom is fixed at 100% in this build), repeat nothing on the bar, and stay open for TAP and Click; the
+  Click, Theme, Layout; Theme opens the theme flyout; the zoom is fixed at 100% in this build), repeat nothing on the bar, and stay open for TAP and Click; the
   bar is not re-fitted while the sheet is open. Nano Q's compact frame (`ShellFrame.cpp`) has
   the same bar, sheet and rail.
 - **Short screens** (`data-compact-short`: compact and 500px tall or less, a phone held
@@ -653,6 +656,17 @@ setlists and mixer slots from loading factory presets. Switching it on restores
 the entries. This is separate from the Power Feature **Factory Preset Archive Tools**,
 which controls development/authoring tools.
 
+**Native UI (Nano)** (`ui.nativeEditor`, `core/ui/ts/settings/nativeEditor.ts`) is an
+experimental switch under its own Experimental card, shown only when `environment.nativeEditor`
+is true: the host can build either editor (`IPluginHost::SupportsNativeEditor`; the Windows x64
+builds, where `SOUNDSHED_NANOQ_UI` is on by default). On, the JUCE app draws itself with Nano Q's
+native UI (`juce/source/NanoQUiEditor.*`, see [plans/nano-q-ui-in-juce.md](plans/nano-q-ui-in-juce.md))
+instead of the WebView. It is an ordinary `setSetting`; the JUCE adapter also passes the change to
+the standalone window, which swaps its editor in place with no relaunch (`MainWindow::switchEditorIfChosen`
+in `juce/source/Main.cpp`). A plugin's next editor follows the setting, so in a DAW it applies when the
+plugin window is next opened, for every instance. The native UI's Settings → Features has the same
+switch, shown under the same condition, as the way back. Nano Q's own app never shows it.
+
 ## Settings → Audio & MIDI
 
 The Settings panel's own tab strip (`core/ui/ts/settings/tabs.ts`, markup in
@@ -662,6 +676,21 @@ the engine-side settings that used to sit beside them — Preset Switching, Adva
 Targets — stayed in General under its *DSP* heading. Each tab is one partial under
 `ui-components/panels/`, and its id is `equipment-tab-<tabId>`; a new one needs the button,
 the partial's include, and the tab id in `resolveEquipmentTabId()`.
+
+### Theme and zoom (`core/ui/ts/themeFlyout.ts`)
+
+The footer's Theme button opens a flyout hung from the body: a tile per theme with its picture.
+(Upstream it also holds the zoom picker, 75% to 200%; in this build the zoom is fixed at 100%, so
+the picker is left out.) It carries
+`data-footer-popover` and `data-control-bar-popover`, so neither compact sheet closes for a click in
+it; tiles are updated in place, never redrawn, when a theme is chosen. See `docs/theme-system.md`.
+
+### Space above the effect panel
+
+At full density the play page's effect panel (`#panel-visualizer`) has a top margin that grows
+with the window's height, `clamp(0px, 4vh - 24px, 24px)` in `css/amp.css`: none below 600px, 8px at
+800px, 16px at 1000px. It is on the tab panel, so a theme's backdrop there moves down with it.
+Compact density has none.
 
 ### Audio Device
 
@@ -1170,6 +1199,46 @@ remain. The first `getLooperState` is sent after `uiReady`, since replies sent b
 registers its receiver are lost.
 
 ## Tones Panel Notes
+
+**Three tabs** (`core/ui/ts/tonesPanel/tabs.ts`, strip in `ui-components/panels/sharing-panel.html`):
+**Community Presets** is tone sharing, everything below this paragraph; **Your Presets** is the
+presets on this machine as a grid of cards with the folders down the side
+(`tonesPanel/localPresets.ts`); **Tone 3000** is the full Tone3000 browser (`tone3000Browser.ts`),
+which used to be Settings → Library's first tab. Settings → Library keeps Resource Library and
+Advanced.
+
+- Community Presets follows the Tone Sharing feature and Tone 3000 its own; Your Presets has
+  none, so the Tones panel itself is always available and falls back to it.
+- A tab starts (its first request to a server, its first render) only once it is on screen: when
+  it is picked with Tones open, or when Tones opens on it. Selecting one while Tones is closed,
+  as a restored view does, only marks it.
+- The tab is `uiViewState.tonesTab` (`community`, `local` or `tone3000`). `switchMainPanel`
+  takes `"tones-community"`, `"tones-local"` and `"tones-tone3000"` to open Tones on a tab, and
+  everything that means "go to tone sharing" uses the first; plain `"sharing"` opens the tab
+  Tones was left on. navigation.ts reaches the panel through `tonesPanelLink.ts`, because the
+  panel loads presets and preset loading imports navigation.
+- Your Presets is a second view of the preset library, not a second library: the popover's
+  filter rules (`getFilteredPresets` with a scope), favourites and ratings, and a card loads its
+  preset through `applyPresetFromLibrary`. Its folder, search, tag and sort are its own, so
+  browsing there does not move the popover. It redraws when the library does
+  (`onPresetUIRendered` in `presets/refresh.ts`). The engine's preset list carries `id`, `name`,
+  `category` and `source`, so a card shows a description or tags, and the tag filter appears,
+  only for entries that have them.
+- **Tone 3000 asks Tone3000 as little as it can** (`tone3000BrowserCache.ts`). Every page of
+  results shown in the last hour is kept in memory under its request (mode, category, search,
+  sort, page), and the one last on screen is also in localStorage, so a category, the sort, a
+  page, the mode, coming back to the tab and reopening the app all reuse what was fetched.
+  A request goes out only when there is nothing under an hour old for what is being shown, or
+  when the user presses Search (or Enter in the field) or Refresh, which sits beside the
+  results' age ("Updated 12 min ago"). The cache is looked up before a session is started, so
+  cached results cost no session request either; Details and Import start one when needed.
+  A tab left open past the hour is not refreshed until it is shown again. The first search can
+  run before the app settings say how to reach Tone3000 (a restored view); it then waits and
+  `retryTone3000BrowserAccess` runs it when they arrive.
+- Each tab fills the panel and has one scrolling region (`css/tones.css`); at compact density a
+  tab scrolls as one, as the Community sections do. The card grids set `grid-auto-rows:
+  max-content`: their cards clip their corners, so with `auto` rows a grid of fixed height
+  shrinks them rather than scrolling.
 
 **Presets** (browse mode `items`) is the community preset search, and an empty search is its
 default list: the newest presets from `/items`, paged with Load More. While nothing is searched

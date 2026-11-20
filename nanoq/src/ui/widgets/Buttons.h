@@ -3,6 +3,7 @@
 // The buttons and switches pages share: square icon buttons, on/off switches, underlined tabs, a
 // drop-down's field and a parameter's toggle. Measurements are the web UI's at its compact density.
 
+#include "ui/widgets/ControlSkin.h"
 #include "ui/widgets/Graphics.h"
 #include "ui/widgets/Pressable.h"
 #include "ui/widgets/SwitchMotion.h"
@@ -215,7 +216,7 @@ class IconButton final : public Pressable
         case Look::Boxed:
             radius = 6.0f;
             fill = mHover ? mTheme.Elevated() : mTheme.Bar();
-            line = mTheme.Pick(el::rgba(58, 58, 72, 255), mTheme.BorderStrong());
+            line = mTheme.ModalRule();
             break;
         case Look::Primary:
             radius = 6.0f;
@@ -225,17 +226,17 @@ class IconButton final : public Pressable
             break;
         case Look::Chip:
             radius = 6.0f;
-            fill = mTheme.Pick(mHover ? el::rgba(40, 40, 50, 255) : el::rgba(30, 30, 38, 255),
-                               mHover ? mTheme.Elevated() : mTheme.Card());
-            line = mTheme.Pick(el::rgba(38, 38, 48, 255), mTheme.Border());
-            ink = mTheme.Pick(el::rgba(235, 240, 250, 242), mTheme.Text());
+            fill = mTheme.DarkOr(mHover ? el::rgba(40, 40, 50, 255) : el::rgba(30, 30, 38, 255),
+                                 mHover ? mTheme.Elevated() : mTheme.Card());
+            line = mTheme.DarkOr(el::rgba(38, 38, 48, 255), mTheme.Border());
+            ink = mTheme.DarkOr(el::rgba(235, 240, 250, 242), mTheme.Text());
             break;
         case Look::Slate:
             radius = 7.0f;
-            fill = mTheme.Pick(mHover ? el::rgba(72, 78, 98, 255) : el::rgba(56, 61, 79, 255),
-                               mHover ? mTheme.Elevated() : mTheme.Card());
-            line = mTheme.Pick(el::rgba(255, 255, 255, 18), mTheme.BorderStrong());
-            ink = mTheme.Pick(el::rgba(203, 203, 220, 255), mTheme.Text());
+            fill = mTheme.DarkOr(mHover ? el::rgba(72, 78, 98, 255) : el::rgba(56, 61, 79, 255),
+                                 mHover ? mTheme.Elevated() : mTheme.Card());
+            line = mTheme.DarkOr(el::rgba(255, 255, 255, 18), mTheme.BorderStrong());
+            ink = mTheme.DarkOr(el::rgba(203, 203, 220, 255), mTheme.Text());
             break;
         case Look::Accent:
             fill = mTheme.Accent().opacity(mHover ? 0.22f : 0.14f);
@@ -487,8 +488,9 @@ class UnderlineTab final : public Pressable
 
     el::view_limits limits(const el::basic_context& ctx) const override
     {
-        const float w =
-            metrics::Hit(el::measure_text(ctx.canvas, mLabel, Font(Weight::SemiBold).size(LabelSize())).x + 16.0f);
+        const auto& text = mTheme.Controls().tabs.text;
+        const float w = metrics::Hit(
+            TrackedWidth(ctx.canvas, mLabel, ControlFont(text, LabelSize()), LabelSize(), text.tracking) + 16.0f);
         return {{w, 26.0f}, {w, metrics::Hit(26.0f, 40.0f)}};
     }
 
@@ -500,14 +502,20 @@ class UnderlineTab final : public Pressable
         const auto b = metrics::Touch() ? el::rect{ctx.bounds.left, std::max(ctx.bounds.top, ctx.bounds.bottom - 26.0f),
                                                    ctx.bounds.right, ctx.bounds.bottom}
                                         : ctx.bounds;
-        const auto ink = mActive ? mTheme.Accent() : (mHover ? mTheme.Text() : mTheme.TextSecondary());
-        FillText(cnv, mLabel, Font(Weight::SemiBold).size(LabelSize()), ink,
-                 el::rect{b.left, b.top, b.right, b.bottom - 3.0f}, HAlign::Centre);
+        // The web UI's .node-param-tab as the theme draws it: spaced capitals, the chosen one in
+        // its colour over a line as wide as its label.
+        const auto& tabs = mTheme.Controls().tabs;
+        const auto& text = mActive ? tabs.active : tabs.text;
+        const auto ink = !mActive && mHover ? mTheme.Text() : Theme::Argb(text.colour);
+        DrawControlText(cnv, mLabel, text, ink, el::rect{b.left, b.top, b.right, b.bottom - 3.0f}, HAlign::Centre,
+                        LabelSize());
 
         if (mActive)
         {
-            cnv.fill_style(mTheme.Accent());
-            cnv.fill_round_rect(el::rect{b.left + 1.0f, b.bottom - 2.0f, b.right - 1.0f, b.bottom}, 1.0f);
+            const float w = TrackedWidth(cnv, mLabel, ControlFont(text, LabelSize()), LabelSize(), text.tracking);
+            const float cx = (b.left + b.right) * 0.5f, line = std::max(1.0f, tabs.lineWidth);
+            cnv.fill_style(Theme::Argb(tabs.line));
+            cnv.fill_rect(el::rect{cx - w * 0.5f, b.bottom - line, cx + w * 0.5f, b.bottom});
         }
     }
 
@@ -607,23 +615,17 @@ class ParamToggle final : public Pressable
         NoteDrawn(ctx);
         auto& cnv = ctx.canvas;
         const auto b = ctx.bounds;
-        const auto label = Font(Weight::SemiBold).size(metrics::Readable(9.0f));
-        FillText(cnv, Ellipsize(cnv, mName, label, b.width() + 6.0f), label,
-                 mTheme.Pick(el::rgba(201, 209, 225, 184), mTheme.TextSecondary()),
-                 el::rect{b.left, b.top, b.right, b.top + 12.0f}, HAlign::Centre);
+        // The web UI's .toggle-switch between the group's label and value, as the theme draws them
+        // (the same sizes as the effect editor's knobs beside it).
+        const auto& skin = mTheme.Controls();
+        DrawControlText(cnv, mName, skin.label, el::rect{b.left, b.top, b.right, b.top + 12.0f}, HAlign::Centre,
+                        metrics::Readable(skin.label.size + 1.0f));
         const float cx = (b.left + b.right) * 0.5f;
-        const el::rect track{cx - 17.0f, b.top + 22.0f, cx + 17.0f, b.top + 40.0f};
-        const float on = mMotion.Position(mOn, DrawnArea());
-        cnv.fill_style(SwitchMotion::Mix(mTheme.ToggleBg().level(mHover ? 1.15f : 1.0f),
-                                         mTheme.Accent().level(mHover ? 1.05f : 0.92f), on));
-        cnv.fill_round_rect(track, 9.0f);
-        cnv.fill_style(el::rgba(255, 255, 255, 240));
-        cnv.add_circle(
-            cycfi::artist::circle(el::point{track.left + 9.0f + (track.width() - 18.0f) * on, track.top + 9.0f}, 7.0f));
-        cnv.fill();
-        FillText(cnv, mOn ? "On" : "Off", Font(Weight::SemiBold).size(10.0f),
-                 mTheme.Pick(el::rgba(231, 236, 246, 194), mTheme.Text()),
-                 el::rect{b.left, b.bottom - 13.0f, b.right, b.bottom}, HAlign::Centre);
+        const float w = skin.switchOff.width, h = skin.switchOff.height;
+        const el::rect track{cx - w * 0.5f, b.top + 31.0f - h * 0.5f, cx + w * 0.5f, b.top + 31.0f + h * 0.5f};
+        DrawSwitch(cnv, track, skin, mMotion.Position(mOn, DrawnArea()), mHover);
+        DrawControlText(cnv, mOn ? "On" : "Off", skin.value, el::rect{b.left, b.bottom - 13.0f, b.right, b.bottom},
+                        HAlign::Centre, skin.value.size + 1.0f);
     }
 
   private:

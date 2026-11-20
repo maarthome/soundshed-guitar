@@ -107,12 +107,14 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
                        std::function<void(const guitarfx::BrowseFileResult&)> callback) override;
     void RunOnMainThread(std::function<void()> fn) override;
     [[nodiscard]] bool IsMessageThread() const override;
+    [[nodiscard]] bool RunsPostedTasks() const override;
     [[nodiscard]] std::filesystem::path GetUserDataPath() const override;
     [[nodiscard]] std::filesystem::path GetBundledAssetsPath() const override;
     [[nodiscard]] double GetSampleRate() const override;
     [[nodiscard]] int GetBlockSize() const override;
     [[nodiscard]] bool SupportsAudioDeviceSettings() const override;
     void HandleAudioDeviceRequest(const std::string& requestJson) override;
+    [[nodiscard]] bool SupportsNativeEditor() const override;
     void NotifyStateChanged() override;
     void NotifyDeferredStateRestored() override;
     void NotifyLatencyChanged(int latencySamples) override;
@@ -168,6 +170,17 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     using AudioTuningHandler = std::function<void(const juce::var& message)>;
     void setAudioTuningHandler(AudioTuningHandler handler);
 
+    // ── Editor switch (experimental) ───────────────────────────────
+    /// True when the next editor should be the native UI: built in (SupportsNativeEditor) and
+    /// chosen in Settings (guitarfx::kNativeEditorSettingKey). Message thread.
+    [[nodiscard]] bool wantsNativeEditor() const;
+    /// Called after either UI changes guitarfx::kNativeEditorSettingKey. The standalone app's
+    /// window installs this to swap its editor in place; in a plugin nothing is installed, and
+    /// the host's next editor follows the setting. Message thread only; the handler must not
+    /// delete the editor synchronously, as the change arrives from inside that editor.
+    using EditorSwitchHandler = std::function<void()>;
+    void setEditorSwitchHandler(EditorSwitchHandler handler);
+
     // ── Accessors ──────────────────────────────────────────────────
     [[nodiscard]] guitarfx::PluginController& getController()
     {
@@ -195,6 +208,7 @@ class PluginProcessorAdapter : public juce::AudioProcessor,
     RemoteAccessHandler mRemoteAccessHandler;
     SystemStatsHandler mSystemStatsHandler;
     AudioTuningHandler mAudioTuningHandler;
+    EditorSwitchHandler mEditorSwitchHandler;
 
     std::filesystem::path mAssetRoot;
     std::unique_ptr<juce::FileChooser> mFileChooser;

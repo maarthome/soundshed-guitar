@@ -1,8 +1,18 @@
 /* ===== Dark Theme (primary) =====
- * Per-theme token overrides. Base/default tokens live in variables.css.
+ * Per-theme token overrides. Base/default tokens live in variables.css. The palette only:
+ * component rules are in dark-skin.css.
  */
 
 .theme-dark {
+  /* The chain's node blocks (css/signal-path/nodes.css): a graphite face on a dark
+     aluminium body (the banded wall is below), lit from above. */
+  --node-face: #24242c;
+  --node-sheen: rgb(255 255 255 / 0.07);
+  --node-edge-light: rgb(255 255 255 / 0.12);
+  --node-wall: #4a4d55;
+  --node-wall-edge: rgb(0 0 0 / 0.45);
+  --node-shadow: rgb(0 0 0 / 0.55);
+
   /* Primary Colors */
   --color-accent: #ff8850;
   --color-accent-hover: #ff9860;
@@ -153,105 +163,7 @@
   --sb-thumb-border: var(--border-dark-light);
   --sb-thumb-hover: var(--border-dark-strong);
   --sb-thumb-hover-border: var(--border-dark-light);
-}
 
-.theme-dark input[type="text"],
-.theme-dark input[type="password"],
-.theme-dark input[type="number"],
-.theme-dark input[type="search"],
-.theme-dark input[type="email"],
-.theme-dark input[type="url"],
-.theme-dark textarea,
-.theme-dark select {
-  background: var(--bg-input);
-  color: var(--text-primary);
-  border-color: var(--border-dark);
-  color-scheme: dark;
-}
-
-.theme-dark input[type="text"]::placeholder,
-.theme-dark input[type="password"]::placeholder,
-.theme-dark input[type="number"]::placeholder,
-.theme-dark input[type="search"]::placeholder,
-.theme-dark input[type="email"]::placeholder,
-.theme-dark input[type="url"]::placeholder,
-.theme-dark textarea::placeholder {
-  color: var(--text-muted);
-}
-
-.theme-dark select option,
-.theme-dark select optgroup {
-  /* Use a solid token; native option lists often ignore gradients. */
-  background: var(--bg-input);
-  color: var(--text-primary);
-}
-
-
-/* ===== From tone-sharing.css ===== */
-.theme-dark .tone-sharing-pack-hero .tone-sharing-card-item-title {
-  text-shadow: 0 1px 7px rgba(0, 0, 0, 0.45);
-}
-
-
-/* ===== From settings.css ===== */
-.theme-dark .settings-row select,
-.theme-dark .settings-section select {
-  color-scheme: dark;
-}
-
-.theme-dark .equipment-library-filters select {
-  color-scheme: dark;
-}
-
-
-/* ===== From modals.css ===== */
-.theme-dark .save-preset-modal .form-group select {
-  color-scheme: dark;
-}
-
-.theme-dark .save-preset-modal .form-group select option,
-.theme-dark .save-preset-modal .form-group select optgroup {
-  background: var(--bg-dark-secondary);
-  color: var(--text-primary);
-}
-
-
-/* ===== From navigation.css ===== */
-/* ===== Theme-specific nav bar overrides ===== */
-
-/* Dark theme nav bar */
-.theme-dark .icon-bar {
-  background: var(--bg-secondary);
-  border-bottom-color: var(--border-dark);
-}
-
-.theme-dark .nav-tab {
-  color: var(--text-muted) !important;
-}
-
-.theme-dark .nav-tab:hover {
-  color: var(--text-secondary) !important;
-}
-
-.theme-dark .nav-tab.active {
-  color: var(--color-accent) !important;
-  border-bottom-color: var(--color-accent) !important;
-}
-
-.theme-dark .nav-settings-btn {
-  border-color: var(--border-dark-light) !important;
-  color: var(--text-muted) !important;
-}
-
-
-/* ===== From signal-path.css ===== */
-.theme-dark .default-effect-shell {
-  border-color: rgba(104, 112, 128, 0.22);
-  background:
-    linear-gradient(180deg, rgba(58, 14, 20, 0.12) 0%, rgba(8, 9, 12, 0.04) 18%, rgba(3, 4, 6, 0.02) 100%),
-    linear-gradient(160deg, rgba(26, 28, 33, 0.96) 0%, rgba(10, 11, 15, 0.98) 44%, rgba(2, 3, 5, 1) 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.58),
-    0 28px 55px rgba(0, 0, 0, 0.5);
+  /* Component tokens: read by the component sheets, which fall back to the base look. */
+  --nav-tab-ink-hover: var(--text-secondary);
 }

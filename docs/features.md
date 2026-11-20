@@ -288,6 +288,7 @@ Central catalog of NAM models and IR files.
 - **Browser per slot**: the resource browser opens on its slot's library category and Tone3000 gear (`cab` or `space` for IRs, the node's gear for NAM), and remembers searches, filters and Tone3000 results per slot, not per type (`core/ui/ts/resourceBrowser/slot.ts`). A slot whose category the library lacks opens on all categories.
 - **The IR Cabinet's two slots navigate apart**: IR B browses as a context of its own (`ir-cab#1`, `resolveResourceContextKey` in `core/ui/ts/signalPath/resourceContext.ts`), so each slot's next/previous walks the list that slot was last picked from — the library (with that slot's own filters), a folder, or a Tone3000 result set. A slot with no folder of its own yet opens its browser in IR A's.
 - **IR list between the slots**: the button between IR A and IR B opens a list of either slot's next/previous list (`core/ui/ts/signalPath/paramsPanel/irSlotList.ts`, rows from `resourceBrowser/navigationListing.ts`). Drag a row onto either slot, or use its A/B buttons; a Tone3000 model is imported first, and a tone whose IRs have not been fetched shows them on a click. A row loaded into the other slot hands that slot the list too, so its arrows then step through it. The list is not drawn when a custom layout places the slots itself.
+- **IR A and IR B side by side**: the IR Cabinet's standard controls show a card for each slot, with the blend between them (`core/ui/ts/signalPath/paramsPanel/irAbPanel.ts`, `css/signal-path/ir-ab.css`; Nano Q in `nanoq/src/ui/effects/EffectPage.cpp`). Each card holds the slot's picker and everything that belongs to that slot alone: Level and Pan, the mic's Radial and Proximity, and Invert as a Ø in its header. The header also says how much of the sound that IR plays: a percentage, Left/Right under L/R Split, Alone, or Empty. The middle holds Blend (a knob reading `A`, `70/30` or `B`), L/R Split and Mics (Mic Emulation). These controls show on both tabs, and the groups under the tabs keep only the cabinet's own (Mix, Output, tone). A control that does nothing as things stand is faded where it is, and its tooltip says why: Pan and Blend under L/R Split, the mic knobs while Mics is off, and Blend and L/R Split with one IR. The Alignment section drops its own Invert buttons, since the cards hold them. Narrower, the web UI puts the blend row under the two cards, and then stacks everything in one column; Nano Q puts the cards' knobs two by two, then stacks. A custom layout still places the cabinet's controls itself.
 
 ---
 
@@ -514,7 +515,7 @@ Application configuration panel.
 - **Resource folders**: Configure search paths for NAM models and IR files.
 - **Input Levelling**: Named levelling profiles apply one fixed gain before the chain to match a guitar/interface setup.
 - **Advanced DSP level targets**: Shared nominal operating level and output protection ceiling are configurable and apply immediately at runtime.
-- **Theme selection**: Cycle or select UI theme (see §20).
+- **Theme selection**: the footer's Theme flyout, with the UI zoom (see §20).
 - **Tone3000 API key**: Enter and persist API key for Tone3000 integration.
 - **Diagnostics**: Real-time signal level and DSP performance streaming stays enabled at all times.
 - **Features tab**: Exposes per-feature toggles for core workflows and power-user tools.
@@ -528,19 +529,22 @@ Application configuration panel.
 
 **Key files:** `core/ui/ts/theme-switcher.ts`, `core/ui/css/variables.css`
 
-CSS variable-based theming with five built-in themes.
+CSS variable-based theming with seven built-in themes (see `docs/theme-system.md`).
 
 | Theme | Class | Description |
 |-------|-------|-------------|
-| Default | (none) | Medium-contrast cool grays |
 | Light | `.theme-light` | High brightness, clean, modern |
 | Dark | `.theme-dark` | Low brightness, reduced eye strain |
-| Classic 70s | `.theme-classic` | Warm vintage browns/ambers |
-| Worn Pedal | `.theme-gritty` | Gritty, worn metal textures |
+| Vintage | `.theme-classic` | Warm vintage browns/ambers |
+| Stage | `.theme-dark.theme-stage` | Flat charcoal with an amber accent; the effect stands on a spot-lit wooden stage |
+| Eleven (id `high-gain`) | `.theme-dark.theme-high-gain` | A high-gain amp head: black diamond plate and tolex, black knobs, red for what is lit, valves glowing behind a grille |
+| Studio | `.theme-light.theme-studio` | Light and skeuomorphic: current studio hardware, moulded plastic with 3D keys under soft light |
+| Studio 2003 | `.theme-light.theme-studio-2003` | Light and skeuomorphic: used studio hardware, with rendered knobs, screws and panels |
 
 - All colors use CSS variables (`--color-primary`, `--bg-primary`, `--text-primary`, etc.) — no hardcoded values in components.
 - **Persistence**: Selection stored in `localStorage` and `settings/app.json`.
-- **Cycle**: Click 🎨 icon in the icon bar or call `themeSwitcher.cycleTheme()`.
+- **Choose**: the footer's Theme button opens a flyout with the UI zoom and a picture of each theme; a tile applies its theme at once (see `docs/theme-system.md`). `themeSwitcher.cycleTheme()` steps through them in code.
+- **Own effect-panel background**: Settings → UI → Effect Panel Background puts the player's own picture (PNG, JPEG, GIF or WebP) behind the play page's effect panel under every theme, with a Fade to keep text readable (see `docs/theme-system.md`).
 - **Variable categories**: Primary colors, backgrounds, text, borders, controls, overlays, shadows.
 
 ---

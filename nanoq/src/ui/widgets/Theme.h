@@ -4,32 +4,37 @@
 // Nano uses, so a theme looks the same in every product), as Elements colours, plus the
 // measurements the views share.
 
+#include "uiclient/ThemeControls.generated.h"
 #include "uiclient/ThemeTokens.generated.h"
 
 #include <elements.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <string_view>
 
 namespace nanoq::ui
 {
 namespace el = cycfi::elements;
+class Images;
 
-/// The active theme's colours. "light", "dark" or "classic"; anything else is dark, as the
-/// web UI normalises it.
+/// The active theme's colours. Any theme the web UI lists (core/ui/ts/themes.ts); an unknown
+/// name is dark, as the web UI normalises it.
 class Theme
 {
   public:
     void Set(const std::string& name);
 
-    [[nodiscard]] const std::string& Name() const noexcept
+    [[nodiscard]] std::string_view Name() const noexcept
     {
-        return mName;
+        return mInfo->id;
     }
 
+    /// The light themes: Light and the two Studio themes.
     [[nodiscard]] bool IsLight() const noexcept
     {
-        return mName == "light";
+        return !mInfo->dark;
     }
 
     [[nodiscard]] static el::color Argb(std::uint32_t value) noexcept
@@ -189,6 +194,66 @@ class Theme
         return Argb(T().toggleBg);
     }
 
+    /// A raised surface, the web UI's --bg-surface: a chain block's lower half, a frame's well.
+    [[nodiscard]] el::color Surface() const noexcept
+    {
+        return Argb(T().bgSurface);
+    }
+
+    // A button's face and outline (--button-bg, --button-border).
+    [[nodiscard]] el::color ButtonBg() const noexcept
+    {
+        return Argb(T().buttonBg);
+    }
+
+    [[nodiscard]] el::color ButtonBorder() const noexcept
+    {
+        return Argb(T().buttonBorder);
+    }
+
+    // The effect panel's title and its values (--effect-shell-title-ink, --effect-shell-value-ink).
+    [[nodiscard]] el::color EffectTitleInk() const noexcept
+    {
+        return Argb(T().effectShellTitleInk);
+    }
+
+    [[nodiscard]] el::color EffectValueInk() const noexcept
+    {
+        return Argb(T().effectShellValueInk);
+    }
+
+    /// How the theme draws the effect editor's controls: a knob's face, pointer and picture, a
+    /// switch, the tabs, a group's box, a control's label and value (ControlSkin.h draws them).
+    [[nodiscard]] const guitarfx::uiclient::theme::ControlSkin& Controls() const noexcept
+    {
+        return guitarfx::uiclient::theme::FindControlSkin(mInfo->id);
+    }
+
+    /// The artwork the controls draw (a theme's knob picture), from the shell's image cache; null
+    /// until the shell gives it one, or when the picture is missing.
+    [[nodiscard]] std::shared_ptr<cycfi::artist::image> Picture(std::string_view relativePath) const;
+
+    /// Where Picture reads from: the shell's cache, for its lifetime (null to let go of it).
+    void UseImages(Images* images) noexcept
+    {
+        mImages = images;
+    }
+
+    /// The Scale Guide's colours (the web UI's --sg-* properties, core/ui/css/scale-guide.css).
+    struct ScaleGuideColours
+    {
+        el::color surface, fret, nut, capo, openSlot, dotFill, dotEdge, dotText, dimFill, dimText, boxLine, boxDot,
+            boxText;
+    };
+
+    [[nodiscard]] ScaleGuideColours ScaleGuide() const noexcept
+    {
+        const auto& t = T();
+        return {Argb(t.sgSurface), Argb(t.sgFret),    Argb(t.sgNut),     Argb(t.sgCapo),    Argb(t.sgOpenSlot),
+                Argb(t.sgDotFill), Argb(t.sgDotEdge), Argb(t.sgDotText), Argb(t.sgDimFill), Argb(t.sgDimText),
+                Argb(t.sgBoxLine), Argb(t.sgBoxDot),  Argb(t.sgBoxText)};
+    }
+
     // A dialog's colours (the web UI's --modal-*): its body, the raised header and footer bands,
     // the outline and the rules, and its three weights of text.
     [[nodiscard]] el::color ModalBg() const noexcept
@@ -243,8 +308,16 @@ class Theme
         return IsLight() ? Text() : TextOnDark();
     }
 
-    /// `dark` (a colour measured from the dark web UI) on the dark themes, and on the light one
-    /// `light`, the token the web UI's light theme draws that part with.
+    /// `dark` on the Dark theme, a colour measured from the Dark web UI for a part no token carries
+    /// yet; on every other theme `token`, that theme's own colour for the part. Vintage, Stage and
+    /// Eleven draw in their palettes this way instead of in Dark's colours.
+    [[nodiscard]] el::color DarkOr(el::color dark, el::color token) const noexcept
+    {
+        return mInfo->tokens == &guitarfx::uiclient::theme::kDark ? dark : token;
+    }
+
+    /// `dark` on the dark themes and `light` on the light ones: for shades no theme colours (a
+    /// plot's backdrop, the shading over a picture, the fretboard's wood).
     [[nodiscard]] el::color Pick(el::color dark, el::color light) const noexcept
     {
         return IsLight() ? light : dark;
@@ -255,22 +328,39 @@ class Theme
 
     [[nodiscard]] const Tokens& T() const noexcept
     {
-        return *mTokens;
+        return *mInfo->tokens;
     }
 
-    std::string mName = "dark";
-    const Tokens* mTokens = &guitarfx::uiclient::theme::kDark;
+    const guitarfx::uiclient::theme::ThemeInfo* mInfo = &guitarfx::uiclient::theme::FindTheme("dark");
+    Images* mImages = nullptr;
 };
 
-/// Text weights Nano draws in: Inter's static cuts.
+/// Text weights Nano Q draws in, in the theme's face: Regular is the page's own weight (Inter's
+/// 400; a step heavier for the themes whose text is set heavier), Medium and SemiBold one and
+/// two steps above it. Title is the theme's face and weight for titles (an effect's name, a
+/// dialog's), drawn TitleScale() times its size.
 enum class Weight
 {
     Regular,
     Medium,
-    SemiBold
+    SemiBold,
+    Title
 };
 
+/// The face for `weight` in the theme last Set: its family (core/nativeui/fonts has its cuts,
+/// tools/gen-nano-fonts.mjs makes them) at that weight. UI thread.
 [[nodiscard]] el::font_descr Font(Weight weight = Weight::Regular);
+
+/// How much larger than its size a title is drawn (the web UI's font-size-adjust).
+[[nodiscard]] float TitleScale();
+
+/// Font(Weight::Title) at `size`, scaled by TitleScale().
+[[nodiscard]] el::font_descr TitleFont(float size);
+
+/// A family Nano Q draws for `family` (a face it ships, else Inter) at `weight` (100 to 900):
+/// Inter at its three cuts as before, a theme face at the weight asked (the platform picks
+/// the nearest cut).
+[[nodiscard]] el::font_descr FaceFor(std::string_view family, int weight);
 
 /// A fixed-pitch face, for code (a preset's JSON).
 [[nodiscard]] el::font_descr MonoFont();

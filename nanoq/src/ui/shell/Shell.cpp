@@ -3,6 +3,7 @@
 #include "WindowChrome.h"
 #include "ui/debug/DrawProbe.h"
 #include "ui/shell/ShellIcons.h"
+#include "ui/widgets/ControlSkin.h"
 #include "uiclient/NodeLabels.h"
 
 #include <algorithm>
@@ -27,6 +28,7 @@ Shell::Shell(UiSession& session)
     mPresentation = guitarfx::uiclient::EffectPresentation::Load(session.Link().AssetRoot() / "ui" / "data" /
                                                                  "effect-presentation.json");
     AddShellIcons(mIcons);
+    mTheme.UseImages(&mImages); // a theme's knob picture
     ApplyElementsTheme();
     BuildRoot();
     Subscribe();
@@ -61,6 +63,7 @@ Shell::Shell(UiSession& session)
 Shell::~Shell()
 {
     *mAlive = false;
+    mTheme.UseImages(nullptr);
 
     if (mKeyboard)
     {
@@ -723,7 +726,8 @@ Ptr Shell::BuildStarting()
 {
     auto text = std::make_shared<Text>(mTheme, "Starting the engine...", 16.0f, Weight::Medium);
     text->Colour(mTheme.TextMuted()).Alignment(Text::Align::Centre);
-    return Fill(mTheme.Background(), el::share(el::align_center(el::align_middle(el::hold_any(text)))));
+    return Dressed(mTheme, mTheme.Background(), &Backdrops::main,
+                   el::share(el::align_center(el::align_middle(el::hold_any(text)))));
 }
 
 std::string Shell::SceneSignature() const

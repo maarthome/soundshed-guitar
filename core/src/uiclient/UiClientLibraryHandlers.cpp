@@ -6,6 +6,7 @@
 #include "uiclient/UiClient.h"
 #include "uiclient/ResourceThumbnails.h"
 #include "uiclient/UiClientParsing.h"
+#include "uiclient/ThemeTokens.generated.h"
 
 #include "presets/PresetTypesJson.h"
 
@@ -227,8 +228,7 @@ void UiClient::RegisterLibraryHandlers()
     });
 
     On("theme", [this](const nlohmann::json& m) {
-        const auto theme = m.value("theme", "dark");
-        mState.theme = theme == "light" || theme == "classic" ? theme : "dark";
+        mState.theme = std::string(theme::FindTheme(m.value("theme", "dark")).id);
         Notify(Topic::Session);
     });
 

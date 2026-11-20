@@ -12,7 +12,9 @@
 #include "ui/dialogs/DialogChrome.h"
 #include "ui/shell/FrameParts.h"
 #include "ui/shell/Shell.h"
+#include "ui/widgets/ControlSkin.h"
 
+#include "IPluginHost.h"
 #include "Paths.h"
 #include "uiclient/FeatureFlags.h"
 #include "uiclient/ParamFormat.h"
@@ -404,6 +406,21 @@ Ptr Shell::BuildSettingsPage()
     case SettingsSection::Features: {
         heading("Feature Toggles");
 
+        // Hosted in Soundshed Guitar, which can draw itself with either UI: the way back to the web
+        // UI (its Settings → Features has the way here). The standalone app swaps at once.
+        if (mState.environment.nativeEditor)
+        {
+            beginCard("Experimental");
+            toggle(
+                "Native UI (Nano)", [boolOr] { return boolOr(guitarfx::kNativeEditorSettingKey, false); },
+                setBool(guitarfx::kNativeEditorSettingKey));
+            describe(mState.environment.standalone
+                         ? "Switch off to go back to the standard UI."
+                         : "Switch off to go back to the standard UI when the plugin window is next opened, for "
+                           "every instance.");
+            endCard();
+        }
+
         // Core features are on unless switched off; power features off unless switched on.
         for (const bool core : {true, false})
         {
@@ -485,6 +502,6 @@ Ptr Shell::BuildSettingsPage()
 
     auto content = VScroll(mWide ? Pad(24, 20, 24, 12, Col(page))
                                  : Pad(metrics::kPagePad, metrics::kPagePadTop, 14, 12, Col(page)));
-    return Fill(mTheme.Background(), WithSectionNav(std::move(nav), content));
+    return Dressed(mTheme, mTheme.Background(), &Backdrops::main, WithSectionNav(std::move(nav), content));
 }
 } // namespace nanoq::ui
