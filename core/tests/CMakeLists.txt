@@ -123,6 +123,7 @@ set(TEST_SOURCES
     PitchShiftEngineTests.cpp
     PitchTrackerTests.cpp
     PitchTrackerRealGuitarTests.cpp
+    Lv2PluginSelectorTests.cpp
     PluginPathUtilsTests.cpp
     PresetDSPLoadingTests.cpp
     PresetArchiveInstallTests.cpp

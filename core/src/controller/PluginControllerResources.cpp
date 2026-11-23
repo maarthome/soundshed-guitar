@@ -18,6 +18,7 @@
 #include "controller/internal/PresetArchiveSupport.h"
 #include "models/ContentHash.h"
 #include "presets/PresetStorage.h"
+#include "resources/Lv2PluginSelector.h"
 #include "resources/PluginPathUtils.h"
 #include "resources/ResourceLibrary.h"
 #include "util/Base64.h"
@@ -488,10 +489,11 @@ std::optional<LibraryResource> PluginController::SaveLocalLibraryResource(const 
         // Normalize plugin paths to the bundle root before anything is keyed off
         // them. Dialog results already arrive normalized, but paths can also come
         // from a preset, a synced library or a hand-edited entry, and path-based
-        // de-duplication below only works if every route agrees.
+        // de-duplication below only works if every route agrees. A plugin's own
+        // .ttl inside a multi-plugin LV2 bundle is kept: it names which plugin.
         if (resourceType == "plugin")
         {
-            resolvedPath = guitarfx::pluginpath::ResolvePluginBundlePath(resolvedPath);
+            resolvedPath = guitarfx::pluginpath::ResolvePluginResourcePath(resolvedPath);
         }
 
         if (!util::PathExists(resolvedPath))
@@ -1393,7 +1395,7 @@ void PluginController::HandleUpdateLibraryResourceRequest(const nlohmann::json& 
             // under its bundle root whichever route the path arrived by.
             if (resourceType == "plugin")
             {
-                updatedPath = guitarfx::pluginpath::ResolvePluginBundlePath(updatedPath);
+                updatedPath = guitarfx::pluginpath::ResolvePluginResourcePath(updatedPath);
             }
 
             if (!std::filesystem::exists(updatedPath))

@@ -2,6 +2,7 @@
 
 #include "dsp/EffectGuids.h"
 #include "dsp/EffectRegistry.h"
+#include "resources/Lv2PluginSelector.h"
 #include "resources/PluginPathUtils.h"
 #include "util/PathEncoding.h"
 #include "util/SessionLog.h"
@@ -1361,7 +1362,13 @@ bool JuceHostedPluginEffect::LoadPluginFromPath(const std::filesystem::path& pat
     // hand-edited entry are normalized identically.
     const std::filesystem::path resolvedPath = pluginpath::ResolvePluginBundlePath(path);
 
-    if (DeferLoadToHandOver(resolvedPath))
+    // A plugin's own .ttl inside a multi-plugin LV2 bundle names one plugin of the
+    // several the bundle scan returns. The .ttl path stays the plugin's identity, so a
+    // swap between two plugins of one bundle is never mistaken for the same plugin.
+    const std::string selectedPluginUri = pluginpath::Lv2PluginUriForPath(path);
+    const std::filesystem::path identityPath = selectedPluginUri.empty() ? resolvedPath : path.lexically_normal();
+
+    if (DeferLoadToHandOver(identityPath))
     {
         return true;
     }
@@ -1523,8 +1530,27 @@ bool JuceHostedPluginEffect::LoadPluginFromPath(const std::filesystem::path& pat
     }
 
     juce::PluginDescription* selected = descriptions.getFirst();
+    bool selectedByUri = false;
 
-    if (!mPluginIdentifier.empty())
+    if (!selectedPluginUri.empty())
+    {
+        for (auto* description : descriptions)
+        {
+            if (description && description->fileOrIdentifier == juce::String(selectedPluginUri))
+            {
+                selected = description;
+                selectedByUri = true;
+                break;
+            }
+        }
+
+        AppendHostedPluginTrace("LoadPluginFromPath ttl selects uri=" + selectedPluginUri +
+                                ", matched=" + std::string{selectedByUri ? "true" : "false"});
+    }
+
+    // A stored identifier would be the previous plugin's when the node was just switched
+    // to another plugin of the same bundle, so the picked .ttl wins over it.
+    if (!selectedByUri && !mPluginIdentifier.empty())
     {
         for (auto* description : descriptions)
         {
@@ -1618,7 +1644,7 @@ bool JuceHostedPluginEffect::LoadPluginFromPath(const std::filesystem::path& pat
     }
 
     mPluginDescription = *selected;
-    mPluginPath = resolvedPath;
+    mPluginPath = identityPath;
     mPluginFormat = FromJuceString(selected->pluginFormatName);
     mPluginIdentifier = FromJuceString(selected->createIdentifierString());
     ClosePluginEditor();

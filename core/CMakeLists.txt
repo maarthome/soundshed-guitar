@@ -836,6 +836,8 @@ set(GUITARFX_CORE_SOURCES
     src/resources/ResourceLibrary.cpp
     src/resources/PluginPathUtils.h
     src/resources/PluginPathUtils.cpp
+    src/resources/Lv2PluginSelector.h
+    src/resources/Lv2PluginSelector.cpp
 
     # Storage
     src/storage/JsonStore.h
