@@ -1,6 +1,7 @@
 #include "ui/UiSession.h"
 
 #include "ui/Drawn.h"
+#include "ui/debug/DevCommands.h"
 
 #include <chrono>
 
@@ -46,6 +47,7 @@ UiSession::UiSession(UiLink& link, cycfi::elements::view& view)
                 mCommands.SetSetting(key, value);
             }
         };
+        mDriver->onCommand = [this](const std::string& line) { RunDevCommand(mClient.State(), mCommands, line); };
     }
 
     mClient.Start();
@@ -72,6 +74,7 @@ void UiSession::PostToUi(std::function<void()> fn)
 UiSession::~UiSession()
 {
     *mAlive = false;
+    mFolderLookup.reset();
     mTones.reset();
     mLink.SendRequest(R"({"type":"uiVisibility","visible":false})");
     mLink.SetViewAttached(false);

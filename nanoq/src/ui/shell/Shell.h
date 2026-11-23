@@ -26,6 +26,7 @@
 #include "ui/input/KeyRouter.h"
 #include "ui/widgets/Layout.h"
 #include "ui/effects/LayoutView.h"
+#include "ui/effects/MultibandPlot.h"
 #include "ui/effects/ResponsePlot.h"
 #include "ui/chain/EffectRows.h"
 #include "ui/shell/FrameWidgets.h"
@@ -36,6 +37,7 @@
 #include "uiclient/ChainDropRules.h"
 #include "uiclient/ChainHistory.h"
 #include "uiclient/ChainLayout.h"
+#include "uiclient/DspDiagnostics.h"
 #include "uiclient/DspStatus.h"
 #include "uiclient/SignalFlow.h"
 #include "uiclient/UpdateCheck.h"
@@ -123,8 +125,9 @@ struct SectionNav
     std::string help;               // a help card under the side list
 };
 
-class WebViewSlot; // JamPage.cpp
-class ScaleNeck;   // ScaleGuideDraw.h
+class WebViewSlot;    // JamPage.cpp
+class ScaleNeck;      // ScaleGuideDraw.h
+class ChordWheelView; // ScaleGuideDraw.h
 class RunTabView;
 class ProgressionTabView;
 class NodeCard;  // NodeCard.h
@@ -283,8 +286,23 @@ class Shell
     Ptr BuildTransport();
     Ptr BuildStarting();
     Ptr BuildChainStage();
-    /// The footer's theme drop-down, in either frame.
+    // ThemeFlyout.cpp: the footer's Theme button, its flyout (the zoom, and a tile per theme), and
+    // the zoom, kept in uiSettings.native.zoom.
+    /// The footer's Theme button, in either frame: it opens the flyout.
     [[nodiscard]] std::shared_ptr<IconButton> BuildThemeButton();
+    void ToggleThemeFlyout(el::rect anchor);
+    void OpenThemeFlyout(el::rect anchor);
+    void CloseThemeFlyout();
+    /// The flyout's zoom select (100%, ...), bound to the zoom.
+    [[nodiscard]] Ptr BuildZoomPicker();
+    [[nodiscard]] float CurrentZoom() const;
+    /// A zoom chosen in the UI: applied and stored.
+    void SetZoom(float zoom);
+    /// Puts `zoom` on the view, and places what is open (the flyout, the Options sheet) again.
+    void ApplyZoom(float zoom);
+    /// Each tick: a stored zoom the view has not applied yet is applied, and one the host changed
+    /// (QPlug's zoom keys) is stored.
+    void SyncZoom();
     /// Back to the web UI, where Soundshed Guitar hosts this UI (environment.nativeEditor); null
     /// anywhere else.
     [[nodiscard]] std::shared_ptr<IconButton> BuildStandardUiButton();
@@ -304,8 +322,6 @@ class Shell
     /// frame's Options sheet (bound, so they follow an undo made in the sheet without a rebuild).
     [[nodiscard]] Ptr BuildHistoryControls();
     void PlayOrStopDemo();
-    /// The zoom's select (100%, ...), for the Options sheet and the full footer.
-    [[nodiscard]] Ptr ZoomButton();
     /// The presets loaded, in order, for the control bar's back and forward (preset-undo/redo).
     void NotePresetTrail();
     void StepPresetTrail(int direction);
@@ -543,9 +559,25 @@ class Shell
     std::weak_ptr<el::element> mSpatialPanner, mAnalyzerPanel;
     std::string mLiveNodeId;
 
-    /// Pickup Match's custom designs, described from its curve's reply.
-    [[nodiscard]] Ptr BuildPickupDesignLines();
-    std::vector<std::pair<std::string, std::weak_ptr<Text>>> mPickupDesignLines;
+    /// A control's cell as the effect page builds it: its width and the cell, named `shown`.
+    using ParamCellMaker =
+        std::function<std::pair<float, Ptr>(const guitarfx::uiclient::EffectParamInfo& info, const std::string& shown)>;
+    /// Pickup Match's design blocks (EqPlot.cpp): one per side set to Custom Design, its design
+    /// controls made by `makeCell`, its summary from the curve's reply, and the note. Null when
+    /// neither side is custom; `height` is what they take `width` wide.
+    [[nodiscard]] Ptr BuildPickupDesignBlocks(const guitarfx::GraphNode& node, float width,
+                                              const ParamCellMaker& makeCell, float& height);
+    void NotePickupDesigns(const std::map<std::string, double>& summary);
+    /// A Pickup Match parameter its design blocks show, so the knob groups leave it out.
+    [[nodiscard]] static bool IsPickupDesignParam(const std::string& key);
+    std::map<std::string, std::string> mPickupDesignText; // each side's summary, for mPickupDesignNodeId
+    std::string mPickupDesignNodeId;
+    std::vector<std::weak_ptr<el::element>> mPickupDesignPills;
+    /// The graphic EQ's sliders over its curve (GraphicEq.cpp), `width` wide; `height` is what it takes.
+    [[nodiscard]] Ptr BuildGraphicEq(const guitarfx::GraphNode& node, float width, float& height);
+    /// What the EQ sections' layout depends on (the graphic EQ's bands, Pickup Match's custom
+    /// sides), for EffectPageSignature.
+    [[nodiscard]] std::string EqSectionSignature(const guitarfx::GraphNode& node) const;
 
     // DspStatusView.cpp: the effect's and the output's DSP status readouts.
     struct DspStatusView
@@ -593,10 +625,22 @@ class Shell
     /// The Simple Cabinet's Match an IR and Export as IR.
     [[nodiscard]] Ptr BuildCabTools(const guitarfx::GraphNode& node);
     void SyncIrExport();
+    /// The tools' buttons disabled and the status set while a match or an export runs.
+    void ShowCabToolsState();
     std::string mPendingIrExport; // the request id of an export as IR still out
+    bool mCabMatchPending = false;
     std::weak_ptr<Text> mIrExportStatus;
+    std::weak_ptr<PlotToolButton> mCabMatchButton, mIrExportButton;
     std::optional<EqPlotState> mEffectPlot;  // the effect editor's
     std::optional<EqPlotState> mOverlayPlot; // a dialog's (the Global EQ)
+
+    // MultibandSection.cpp: the Multi-band Compressor's and Distortion's Bands plot, fed with the
+    // node's spectrum in and out and its band meters while no EQ plot has the spectrum watch.
+    [[nodiscard]] Ptr BuildMultibandPlot(const guitarfx::GraphNode& node);
+    /// Keeps the plot's feed going; false when there is no plot on show to feed.
+    bool SyncMultibandFeed();
+    std::shared_ptr<MultibandPlot> mMultibandPlot;
+    EqPlotSource mMultibandSource;
 
     // PadsView.cpp
     [[nodiscard]] Ptr BuildPadsView();
@@ -710,6 +754,9 @@ class Shell
     std::uint64_t mScaleGuideReadings = 0;
     guitarfx::uiclient::scaleguide::NoteFollower mScaleGuideFollower;
     guitarfx::uiclient::scaleguide::StrumGate mScaleGuideStrums;
+    guitarfx::uiclient::scaleguide::ChordEar mScaleGuideEar; // how closely a strum must match: set by the playing
+    std::weak_ptr<ChordWheelView> mScaleGuideWheel;
+    double mScaleGuideLandedUntil = 0.0; // the wheel's ring shows a chord landing until then
     int mScaleGuideRound = 1, mScaleGuideClean = 0;
     guitarfx::uiclient::scaleguide::Heard mScaleGuideHeard; // as the Heard column shows it
     std::weak_ptr<Text> mScaleGuideHeardChord, mScaleGuideHeardTrail, mScaleGuideHeardKey;
@@ -766,11 +813,34 @@ class Shell
         General,
         Audio,
         Dsp,
-        Features,
+        Ui,
         Help
     };
     SettingsSection mSettingsSection = SettingsSection::General; // the section Settings shows
+    int mDspSettingsTab = 0; // DSP Performance: Diagnostics, Processing, Levels & Switching
+    int mUiSettingsTab = 0;  // UI: Interface, Features
     Ptr BuildSettingsPage();
+    /// A row of tabs inside a section; `tab` is the one shown, and a click shows another.
+    [[nodiscard]] Ptr BuildSettingsTabs(std::initializer_list<const char*> labels, int& tab);
+
+    // DspPerformance.cpp: Settings → DSP Performance's live figures (the web UI's views.ts and
+    // dspNodeTable.ts): the load over the tabs, and the Diagnostics tab's levels, load history and
+    // per-node table.
+    struct DspSnapshot
+    {
+        std::string load, peakLoad, latency;
+        guitarfx::uiclient::DspLevelSummary input, output;
+        std::vector<guitarfx::uiclient::DspDiagnosticsGroup> table;
+    };
+
+    [[nodiscard]] Ptr BuildDspFigures();
+    [[nodiscard]] Ptr BuildDspDiagnostics(float width);
+    /// Each tick: folds in the feeds, and refreshes what the page shows a few times a second.
+    void SyncDspDiagnostics(bool refresh = false);
+    guitarfx::uiclient::DspDiagnostics mDspDiagnostics;
+    DspSnapshot mDspSnapshot;
+    std::weak_ptr<el::element> mDspFiguresShown; // on screen: the snapshot is kept fresh
+    std::string mDspTableShape;                  // the groups and rows the table was built with
 
     // Dialogs.cpp
     void ApplyElementsTheme();
@@ -976,7 +1046,13 @@ class Shell
     std::string mTopSignature;
 
     Ptr mOverlay;
-    Ptr mDropdown; // a drop-down list: a layer of its own, so one opened from a dialog stacks over it
+    Ptr mDropdown;    // a drop-down list: a layer of its own, so one opened from a dialog stacks over it
+    Ptr mThemeFlyout; // the theme flyout: over the overlay (the Options sheet), under a drop-down
+    el::rect mThemeFlyoutAnchor;
+    bool mOptionsOpen = false; // the overlay is the compact footer's Options sheet
+    el::rect mOptionsAnchor;
+    bool mZoomKnown = false; // mZoomStored holds the zoom stored, or the one first seen
+    float mZoomStored = 1.0f;
     Ptr mToast;
     Ptr mFilePickerLayer; // over everything: a dialog may be what asked for the file
     std::shared_ptr<FilePickerState> mFilePicker;

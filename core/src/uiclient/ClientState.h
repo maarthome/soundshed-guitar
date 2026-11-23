@@ -134,6 +134,15 @@ struct LevelReading
     int channelCount = 0; // 0: did not run last block
 };
 
+/// One node the signal diagnostics feed reports, from its roster ("sldRoster").
+struct TelemetryNode
+{
+    std::string key;   // "<scope>::<nodeId>", as `TelemetryState::nodes` is keyed
+    std::string scope; // "pre", "post", or the preset id
+    std::string nodeId;
+    std::string nodeType; // its effect type
+};
+
 struct TelemetryState
 {
     LevelReading rawInput;
@@ -143,6 +152,8 @@ struct TelemetryState
     /// Per node, keyed "<scope>::<nodeId>" as the engine keys dspPerformance: scope is
     /// "pre", "post", or the preset id.
     std::map<std::string, LevelReading> nodes;
+    /// The roster those levels follow, in the engine's order.
+    std::vector<TelemetryNode> roster;
 
     double dspLoadPercent = 0.0;
     int totalLatencySamples = 0;
@@ -151,7 +162,21 @@ struct TelemetryState
     double totalProcessingUs = 0.0;
     std::optional<double> peakDspLoadPercent; // the worst block since the frame before
     double sampleRate = 0.0;
-    unsigned frameCounter = 0;
+    unsigned frameCounter = 0;            // counts "sld" frames
+    unsigned performanceFrameCounter = 0; // counts "dspPerformance" frames
+};
+
+/// One band of a multi-band effect, metered with its spectrum (sldS `b`): its range (0 for an
+/// open end), how hard it is working (gain reduction, or drive past the clipper's knee; held at
+/// its peak since the last frame), its level, and where its curve starts to act when the engine
+/// sends it.
+struct NodeSpectrumBand
+{
+    double lowHz = 0.0;
+    double highHz = 0.0;
+    double gainReductionDb = 0.0;
+    double levelDb = -120.0;
+    std::optional<double> thresholdDb;
 };
 
 /// One node's input spectrum behind an EQ curve (sldS): `binsDb` log-spaced from minHz to
@@ -163,6 +188,10 @@ struct NodeSpectrum
     double floorDb = -96.0;
     double ceilingDb = 0.0;
     std::vector<double> binsDb;
+    /// A node with band meters (the multi-band effects) sends its output's spectrum, on the same
+    /// bins, and its bands, low band first (sldS `o` and `b`); both empty for any other node.
+    std::vector<double> outputBinsDb;
+    std::vector<NodeSpectrumBand> bands;
     double receivedAt = 0.0; // UiClient's clock; a spectrum that stops arriving is cleared
 };
 
@@ -208,11 +237,14 @@ struct SpatialPosition
 {
     double azimuth = 0.0;
     double elevation = 0.0;
-    double distance = 1.0;
+    double distance = 1.5;
     double itdUs = 0.0;
     double ildDb = 0.0;
     double rateHz = 0.0;
     bool moving = false;
+    /// Counts the spatialPosition messages, so a view adds one point to its trail per message
+    /// however often it is synced.
+    std::uint64_t serial = 0;
 };
 
 /// One band of a Multi-band Gate's listen.
@@ -829,6 +861,9 @@ struct ClientState
     std::map<std::string, ResourceImport> resourceImports; // by request id (Topic::Resources)
     ResourceFolderListing resourceFolder;                  // the folder last listed (Topic::ResourceFolders)
     std::string pickedResourceFolder;                      // a folder the user just picked to add, until taken
+    /// Folder files' content hashes the engine worked out (resourceFileContentHash), by
+    /// FolderPathKey; "" when the file could not be read (Topic::ResourceFolders).
+    std::map<std::string, std::string> resourceFileHashes;
 
     [[nodiscard]] const EffectTypeInfo* FindEffectType(const std::string& type) const;
     [[nodiscard]] const PresetSummary* FindPresetSummary(const std::string& id) const;

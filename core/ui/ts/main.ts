@@ -30,7 +30,7 @@ import { initFxSelector, refreshFxSelector } from "./fxSelector.js";
 import { themeSwitcher } from "./theme-switcher.js";
 import { startUiSettingsTracking } from "./windowSettings.js";
 import { renderFooterDemoAudio } from "./demoAudio.js";
-import { initDensitySelect, initDiagnosticsToggle, initZoomControls, initUserInputCalibrationControls } from "./settings.js";
+import { initDensitySelect, initZoomControls, initUserInputCalibrationControls } from "./settings.js";
 import { initThemeFlyout } from "./themeFlyout.js";
 import { postMessage, requestLooperState } from "./bridge.js";
 import { initSystemStats } from "./systemStats.js";
@@ -304,7 +304,6 @@ async function bootstrap(): Promise<void> {
   startUiSettingsTracking();
   // Re-apply after settings tracking starts so host-restored height is respected.
   try { initSignalPathResize(); } catch {}
-  initDiagnosticsToggle();
   initUserInputCalibrationControls();
   document.addEventListener(FEATURE_FLAGS_CHANGED_EVENT, () => {
     refreshFxSelector();

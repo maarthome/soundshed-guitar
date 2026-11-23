@@ -36,6 +36,7 @@
 #include "uiclient/Riffs.h"
 #include "uiclient/Analysis.h"
 #include "uiclient/Automation.h"
+#include "uiclient/DspDiagnostics.h"
 #include "uiclient/DspStatus.h"
 #include "uiclient/Metronome.h"
 #include "uiclient/UpdateCheck.h"
@@ -1391,6 +1392,8 @@ void TestAnalysis()
     const auto& a = client.State().analysis;
     Expect(a.spectra.count("p1::eq1") && a.spectra.at("p1::eq1").binsDb.size() == 3,
            "a node's spectrum is kept by its feed key");
+    Expect(a.spectra.at("p1::eq1").outputBinsDb.empty() && a.spectra.at("p1::eq1").bands.empty(),
+           "a node without band meters has no output bins or bands");
     Expect(a.loudness.count("post::global_eq") && a.loudness.at("post::global_eq").momentaryLufs == -18.2 &&
                !a.loudness.at("post::global_eq").integratedLufs,
            "a node's loudness, an unfilled window empty");
@@ -1403,6 +1406,23 @@ void TestAnalysis()
            "a spatial position");
     Expect(a.gateLearn.count("global::global_gate") && a.gateLearn.at("global::global_gate").thresholdDb == -64.0,
            "the global gate's Learn result");
+
+    // A multi-band effect's frame: its output on the same bins and its band meters, a threshold
+    // only where the engine sent one; a malformed band drops the lot, as the web UI reads them.
+    client.Enqueue(
+        R"({"type":"sldS","scope":"preset","presetId":"p1","id":"mb","r":[20,20000,-96,0],"s":[-50,-40,-30],"o":[-52,null,-33],"b":[[0,200,3.5,-20],[200,0,-1,-30,-6]]})");
+    client.Enqueue(
+        R"({"type":"sldS","scope":"preset","presetId":"p1","id":"mb2","r":[20,20000,-96,0],"s":[-50,-40,-30],"o":[-52,-41,-33],"b":[[0,200,null,-20]]})");
+    client.DrainPending();
+    const auto& mb = client.State().analysis.spectra.at("p1::mb");
+    Expect(mb.outputBinsDb.size() == 3 && mb.outputBinsDb[1] == -96.0 && mb.bands.size() == 2,
+           "a multi-band frame keeps its output bins (a gap at the floor) and its bands");
+    Expect(mb.bands[0].gainReductionDb == 3.5 && !mb.bands[0].thresholdDb && mb.bands[1].gainReductionDb == 0.0 &&
+               mb.bands[1].thresholdDb == -6.0 && mb.bands[1].highHz == 0.0,
+           "a band's reduction is never negative, its threshold only when sent");
+    Expect(client.State().analysis.spectra.at("p1::mb2").bands.empty() &&
+               client.State().analysis.spectra.at("p1::mb2").outputBinsDb.empty(),
+           "a malformed band drops the band meters");
 
     // A Multi-band Gate's listen: one entry per band, its noise floors kept through a listen
     // that heard playing.
@@ -1425,6 +1445,27 @@ void TestAnalysis()
     Expect(kept.size() == 6 && kept[0].noiseFloorDb == -90.0 && kept[1].noiseFloorDb == -80.0 && !kept[0].levelDb &&
                !kept[0].thresholdDb,
            "a band's learned noise floor stays drawn; one that heard playing is not taken as noise");
+
+    // The noise gate's floor stays drawn through statuses that bring none, a cancel, and a
+    // listen that heard playing; progress carries on when a status leaves it out.
+    const auto& gate = client.State().analysis.gateLearn.at("global::global_gate");
+    client.Enqueue(
+        R"({"type":"gateLearnStatus","scope":"global","nodeId":"global_gate","state":"listening","progress":0.4,"levelDb":-50})");
+    client.Enqueue(R"({"type":"gateLearnStatus","scope":"global","nodeId":"global_gate","state":"listening"})");
+    client.DrainPending();
+    Expect(gate.noiseFloorDb == -70.0 && gate.progress == 0.4 && !gate.levelDb,
+           "a listen keeps the last noise floor, and its progress when a status has none");
+    client.Enqueue(
+        R"({"type":"gateLearnStatus","scope":"global","nodeId":"global_gate","state":"failed","reason":"playing","noiseFloorDb":-20})");
+    client.DrainPending();
+    Expect(gate.noiseFloorDb == -70.0, "a listen that heard playing does not take it as the noise floor");
+    client.Enqueue(R"({"type":"gateLearnStatus","scope":"global","nodeId":"global_gate","state":"cancelled"})");
+    client.DrainPending();
+    Expect(gate.noiseFloorDb == -70.0 && gate.state == "cancelled", "a cancelled listen keeps the noise floor");
+    client.Enqueue(
+        R"({"type":"gateLearnStatus","scope":"global","nodeId":"global_gate","state":"done","noiseFloorDb":-75,"thresholdDb":-69})");
+    client.DrainPending();
+    Expect(gate.noiseFloorDb == -75.0 && gate.progress == 1.0, "a finished listen brings its own noise floor");
     Expect(DecodeFloat32Base64("AACAPwAAAMA=") == std::vector<float>{1.0f, -2.0f}, "float32 samples from base64");
 }
 
@@ -1651,15 +1692,60 @@ void TestAnalysisPresentation()
     Expect(output.Value(DspStatusItem::Latency) == "0 smp (0.00 ms)", "a whole chain's zero latency is a figure");
 }
 
+// The DSP Performance page's table (dspNodeTable.ts): grouped by chain, active preset first, in
+// signal order, peaks held, latency in milliseconds.
+void TestDspDiagnostics()
+{
+    ClientState state;
+    Preset preset;
+    preset.id = "p1";
+    preset.name = "Lead";
+    preset.graph.nodes = {Node("__input__", kNodeTypeInput), Node("b", EffectGuids::kGain),
+                          Node("a", EffectGuids::kGain), Node("__output__", kNodeTypeOutput)};
+    preset.graph.edges = {GraphEdge{"__input__", "b", 0, 0, 1.0}, GraphEdge{"b", "a", 0, 0, 1.0},
+                          GraphEdge{"a", "__output__", 0, 0, 1.0}};
+    state.activePreset = preset;
+    state.activePresetId = "p1";
+
+    auto& t = state.telemetry;
+    t.roster = {{"post::eq", "post", "eq", "eqType"}, {"p1::a", "p1", "a", ""}, {"p1::b", "p1", "b", ""}};
+    t.nodes["post::eq"] = LevelReading{-6.0, -12.0, 0, false, 2};
+    t.nodes["p1::a"] = LevelReading{-3.0, -9.0, 2, true, 1};
+    t.nodes["p1::b"] = LevelReading{-10.0, -16.0, 0, false, 2};
+    t.nodeProcessingUs["p1::a"] = 30.0;
+    t.totalProcessingUs = 120.0;
+    t.nodeLatencySamples["p1::a"] = 48.0;
+    t.sampleRate = 48000.0;
+    t.dspLoadPercent = 12.5;
+    t.frameCounter = 1;
+    t.performanceFrameCounter = 1;
+
+    DspDiagnostics diagnostics;
+    diagnostics.Update(state, 0.0);
+    auto table = diagnostics.Table(state);
+    Expect(table.size() == 3 && table[0].rows[0].label == "Chain input", "the chain's input first, on its own");
+    Expect(table[1].title == "Lead" && table[2].title == "Global post chain", "the active preset, then post");
+    Expect(table[1].rows.size() == 2 && table[1].rows[0].peak == "-10.0", "in signal order: b feeds a");
+    const auto& a = table[1].rows[1];
+    Expect(a.time == "30.0" && a.share == "25.0" && a.latency == "1.00 ms", "time, share and latency");
+    Expect(a.clipped && a.clipCount == 2 && a.channels == "1" && !a.stereo, "clipping and channels");
+    Expect(table[2].rows[0].latency == "\xE2\x80\x94" && table[2].rows[0].stereo, "no latency reads as a dash");
+    Expect(diagnostics.Load() == "12.5%" && diagnostics.PeakLoad() == "12.5%", "the load");
+
+    t.nodes["p1::a"].peakDb = -20.0;
+    t.frameCounter = 2;
+    diagnostics.Update(state, 5.0);
+    Expect(diagnostics.Table(state)[1].rows[1].peak == "-3.0", "a peak is held");
+    t.frameCounter = 3;
+    diagnostics.Update(state, 11.0);
+    Expect(diagnostics.Table(state)[1].rows[1].peak == "-20.0", "for ten seconds");
+}
+
 // Which cables light with the signal (signalFlow.ts): a node without its own reading hears what
 // feeds it, and a node stays lit a moment through quiet.
 void TestSignalFlow()
 {
     ClientState state;
-    Expect(!IsSignalFlowAnimationEnabled(state), "off unless turned on");
-    state.appSettings[kSignalFlowAnimationSetting] = true;
-    Expect(IsSignalFlowAnimationEnabled(state), "the setting turns it on");
-
     Preset preset;
     preset.id = "p1";
     preset.graph.nodes = {Node("__input__", kNodeTypeInput), Node("split", "splitter"), Node("amp", EffectGuids::kGain),
@@ -2308,6 +2394,7 @@ int main()
     TestAnalysis();
     TestAnalysisPresentation();
     TestSignalFlow();
+    TestDspDiagnostics();
     TestMetronomeMeters();
     TestUpdateCheckVersions();
     TestGlobalChainEditsMirror();

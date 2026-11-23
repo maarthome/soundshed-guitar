@@ -130,6 +130,7 @@ std::shared_ptr<Button> Shell::DialogButton(const std::string& label, std::funct
 void Shell::CloseOverlay()
 {
     CloseDropdown();
+    CloseThemeFlyout(); // opened from the Options sheet, it goes with it
     mOverlayCancel = nullptr;
 
     // A dialog with live feeds (tuner, metronome) stops listening, and tells the engine it is
@@ -166,6 +167,14 @@ void Shell::RemoveLayer(Ptr layer)
     // went in first; and it keeps the focus index only when the layer it takes out had the
     // focus, so taking out one below the focused layer left the index one past it, and the next
     // key was delivered past the end of the layers.
+    // Until then it is closed in every other way: it draws nothing and takes no input, so a
+    // second click or a paint in the gap never reaches what its controls point at, which closing
+    // let go (found by nanoq/tools/stress-ui.ps1 under ASan: the effect picker's freed state).
+    if (auto* router = dynamic_cast<KeyRouter*>(layer.get()))
+    {
+        router->Retire();
+    }
+
     auto& view = mSession.View();
     view.post([&view, layer] {
         auto& layers = view.content();

@@ -29,6 +29,7 @@ constexpr std::string_view kInter = "Inter";
 constexpr std::string_view kThemeFaces[][2] = {
     {"Oswald", "Oswald, Inter"},
     {"Archivo", "Archivo, Inter"},
+    {"Fraunces", "Fraunces, Inter"},
 };
 
 std::string_view FamilyList(std::string_view family)
@@ -77,6 +78,38 @@ void Theme::Set(const std::string& name)
 std::shared_ptr<cycfi::artist::image> Theme::Picture(std::string_view relativePath) const
 {
     return mImages != nullptr && !relativePath.empty() ? mImages->Find(std::string(relativePath)) : nullptr;
+}
+
+std::vector<std::string> Theme::Pictures() const
+{
+    std::vector<std::string> pictures;
+    const auto add = [&](std::string_view path) {
+        if (!path.empty() && std::find(pictures.begin(), pictures.end(), path) == pictures.end())
+        {
+            pictures.emplace_back(path);
+        }
+    };
+
+    const auto& skin = Controls();
+    add(skin.knob.image);
+    add(skin.gaugeFace);
+    const auto& b = skin.backdrops;
+
+    for (const auto* backdrop :
+         {&b.header,  &b.controlBar,  &b.chain,     &b.main,         &b.stage,         &b.footer, &b.shell,
+          &b.modal,   &b.modalHeader, &b.cheekLeft, &b.cheekRight,   &b.keyPlain,      &b.keyOn,  &b.keyPrimary,
+          &b.keyTool, &b.keyNav,      &b.nodePlain, &b.nodeSelected, &b.presetDisplay, &b.tempo})
+    {
+        for (int i = 0; i < backdrop->count; ++i)
+        {
+            if (backdrop->layers[i].kind == 0) // a picture, not a gradient
+            {
+                add(backdrop->layers[i].image);
+            }
+        }
+    }
+
+    return pictures;
 }
 
 el::color Theme::AccentFill() const noexcept

@@ -10,9 +10,12 @@
 #include <elements.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace nanoq::ui
 {
@@ -41,6 +44,15 @@ class Theme
     {
         return el::rgba(static_cast<std::uint8_t>(value >> 16), static_cast<std::uint8_t>(value >> 8),
                         static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(value >> 24));
+    }
+
+    /// The other way: a colour as 0xAARRGGBB.
+    [[nodiscard]] static std::uint32_t ArgbOf(el::color c) noexcept
+    {
+        const auto channel = [](float v) {
+            return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+        };
+        return channel(c.alpha) << 24 | channel(c.red) << 16 | channel(c.green) << 8 | channel(c.blue);
     }
 
     [[nodiscard]] el::color Accent() const noexcept
@@ -232,6 +244,10 @@ class Theme
     /// The artwork the controls draw (a theme's knob picture), from the shell's image cache; null
     /// until the shell gives it one, or when the picture is missing.
     [[nodiscard]] std::shared_ptr<cycfi::artist::image> Picture(std::string_view relativePath) const;
+
+    /// Every picture the theme draws (its knob's, and its backgrounds'), for the shell to decode
+    /// ahead of the first redraw that needs them (Images::Prefetch).
+    [[nodiscard]] std::vector<std::string> Pictures() const;
 
     /// Where Picture reads from: the shell's cache, for its lifetime (null to let go of it).
     void UseImages(Images* images) noexcept

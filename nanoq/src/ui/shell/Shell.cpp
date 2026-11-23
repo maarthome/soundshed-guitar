@@ -226,6 +226,8 @@ void Shell::Rebuild()
     {
         mAppliedTheme = mState.theme;
         mTheme.Set(mState.theme);
+        // Decoded on a thread of their own while the rest is built, not by the first redraw.
+        mImages.Prefetch(mTheme.Pictures());
         ApplyElementsTheme();
         Fill(*mBgSlot, el::share(el::box(mTheme.Background())));
         mDirty |= kAll;
@@ -233,6 +235,20 @@ void Shell::Rebuild()
         mEffectSignature.clear();
         mSceneSignature.clear();
         mTopSignature.clear();
+
+        // The flyout that chose it stays open, drawn afresh in the theme's colours, and so does
+        // the Options sheet it may have opened from (reopening the sheet closes the flyout).
+        const bool flyout = mThemeFlyout != nullptr;
+
+        if (mOptionsOpen)
+        {
+            OpenOptions(mOptionsAnchor);
+        }
+
+        if (flyout)
+        {
+            OpenThemeFlyout(mThemeFlyoutAnchor);
+        }
     }
 
     if (!mState.haveState)
@@ -503,6 +519,7 @@ void Shell::OnTick()
     TickKeyboard();
     TickLooper();
     TickFilePicker();
+    SyncZoom();
     {
         const auto wheel = mState.appSettings.find("ui.mouseWheelAdjustsControls");
         ParamKnob::sWheelAdjusts = wheel == mState.appSettings.end() || !wheel->is_boolean() || wheel->get<bool>();
@@ -570,15 +587,13 @@ void Shell::OnTick()
         ShowToast(n.title, n.detail, n.kind == guitarfx::uiclient::Notification::Kind::Error);
     }
 
-    // The cables light with the signal while Animate signal flow is on (web: signalFlow.ts).
-    if (guitarfx::uiclient::IsSignalFlowAnimationEnabled(mState))
-    {
-        mSignalFlow.Update(mState, UiSession::Now());
-    }
+    // The cables light with the signal (web: signalFlow.ts).
+    mSignalFlow.Update(mState, UiSession::Now());
 
     SyncEqPlotFeeds();
     SyncIrExport();
     SyncDspStatus();
+    SyncDspDiagnostics();
     SyncUpdateCheck();
     SyncDevicePage();
     SyncTonePreview();

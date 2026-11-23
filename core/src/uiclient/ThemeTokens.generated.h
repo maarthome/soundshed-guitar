@@ -50,6 +50,9 @@ struct ThemeTokens
     std::uint32_t eqCurveSpectrumFillTop;    // --eq-curve-spectrum-fill-top
     std::uint32_t eqCurveSpectrumFillBottom; // --eq-curve-spectrum-fill-bottom
     std::uint32_t eqCurveSpectrumLine;       // --eq-curve-spectrum-line
+    std::uint32_t eqCurveTooltipBg;          // --eq-curve-tooltip-bg
+    std::uint32_t eqCurveTooltipText;        // --eq-curve-tooltip-text
+    std::uint32_t overlayLight;              // --overlay-light
     std::uint32_t modalBg;                   // --modal-bg
     std::uint32_t modalBgRaised;             // --modal-bg-raised
     std::uint32_t modalBorder;               // --modal-border
@@ -116,6 +119,9 @@ inline constexpr ThemeTokens kLight{
     0x333a4a60, // eqCurveSpectrumFillTop
     0x083a4a60, // eqCurveSpectrumFillBottom
     0x573a4a60, // eqCurveSpectrumLine
+    0xeb111318, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x4dffffff, // overlayLight
     0xffe2e6f0, // modalBg
     0xffebeef5, // modalBgRaised
     0xffc3cad8, // modalBorder
@@ -182,6 +188,9 @@ inline constexpr ThemeTokens kDark{
     0x38aac8e8, // eqCurveSpectrumFillTop
     0x08aac8e8, // eqCurveSpectrumFillBottom
     0x5cbed6f0, // eqCurveSpectrumLine
+    0xd1000000, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x1affffff, // overlayLight
     0xff18181e, // modalBg
     0xff28282f, // modalBgRaised
     0xff4a4a58, // modalBorder
@@ -248,6 +257,9 @@ inline constexpr ThemeTokens kClassic{
     0x38f5e2c0, // eqCurveSpectrumFillTop
     0x08f5e2c0, // eqCurveSpectrumFillBottom
     0x5cf5e2c0, // eqCurveSpectrumLine
+    0xeb1f1815, // eqCurveTooltipBg
+    0xfff5f1e8, // eqCurveTooltipText
+    0x14f5f1e8, // overlayLight
     0xff2a1f15, // modalBg
     0xff3d2f25, // modalBgRaised
     0xff6b5f4f, // modalBorder
@@ -314,6 +326,9 @@ inline constexpr ThemeTokens kStage{
     0x29dcdcdc, // eqCurveSpectrumFillTop
     0x05dcdcdc, // eqCurveSpectrumFillBottom
     0x4de6e6e6, // eqCurveSpectrumLine
+    0xd1000000, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x1affffff, // overlayLight
     0xff1e1e1e, // modalBg
     0xff262626, // modalBgRaised
     0xff3c3c3c, // modalBorder
@@ -380,6 +395,9 @@ inline constexpr ThemeTokens kHighGain{
     0x26d7d7dc, // eqCurveSpectrumFillTop
     0x05d7d7dc, // eqCurveSpectrumFillBottom
     0x47e1e1e6, // eqCurveSpectrumLine
+    0xd1000000, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x1affffff, // overlayLight
     0xff17181b, // modalBg
     0xff1f2023, // modalBgRaised
     0xff36373b, // modalBorder
@@ -446,6 +464,9 @@ inline constexpr ThemeTokens kStudio{
     0x2e3c3e42, // eqCurveSpectrumFillTop
     0x053c3e42, // eqCurveSpectrumFillBottom
     0x5c3c3e42, // eqCurveSpectrumLine
+    0xeb111318, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x4dffffff, // overlayLight
     0xfff8f8f6, // modalBg
     0xfffdfdfc, // modalBgRaised
     0xffd0d0cb, // modalBorder
@@ -512,6 +533,9 @@ inline constexpr ThemeTokens kStudio2003{
     0x38423e36, // eqCurveSpectrumFillTop
     0x08463e2c, // eqCurveSpectrumFillBottom
     0x66463e2c, // eqCurveSpectrumLine
+    0xeb111318, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x4dffffff, // overlayLight
     0xffd1d0cb, // modalBg
     0xffdad9d4, // modalBgRaised
     0xffa09e97, // modalBorder
@@ -538,6 +562,75 @@ inline constexpr ThemeTokens kStudio2003{
     0xffffffff, // sgBoxText
 };
 
+inline constexpr ThemeTokens kStudio1973{
+    0xfff2952e, // accent
+    0xffffad4a, // accentHover
+    0xffc46418, // accentDark
+    0xff68b868, // success
+    0xff6888a8, // info
+    0xffc86868, // error
+    0xffd63031, // warning
+    0xff1d120b, // bgPrimary
+    0xff22160d, // bgSecondary
+    0xff281a10, // bgTertiary
+    0xff312116, // bgSurface
+    0xff3a281b, // bgElevated
+    0xff20140c, // bgPanel
+    0xff2c1d13, // bgCard
+    0xff130b06, // bgInput
+    0xff1a100a, // bgHeader
+    0xff3a1d0c, // bgFooter
+    0xfff6ead3, // textPrimary
+    0xffe6d3b1, // textSecondary
+    0xffd2ba93, // textTertiary
+    0xffc2a67e, // textMuted
+    0xfff8eedb, // textOnDark
+    0xff4a3424, // borderLight
+    0xff3e2b1d, // borderMedium
+    0xff34241a, // borderStrong
+    0xff3a281b, // controlBg
+    0xffc9c3b6, // controlKnobBg
+    0xff0d0805, // controlBorder
+    0xff1a1410, // controlIndicator
+    0xffc4561a, // knobRingStart
+    0xffffc35a, // knobRingEnd
+    0xff160e08, // knobRingTrack
+    0xff160e08, // toggleBg
+    0x14ffdcaa, // eqCurveGrid
+    0xf5ffa63c, // eqCurveResponse
+    0xe6fff0d6, // eqCurveHandleStroke
+    0x29ffc882, // eqCurveSpectrumFillTop
+    0x05ffc882, // eqCurveSpectrumFillBottom
+    0x4dffd296, // eqCurveSpectrumLine
+    0xd1000000, // eqCurveTooltipBg
+    0xffffffff, // eqCurveTooltipText
+    0x1affffff, // overlayLight
+    0xff24170f, // modalBg
+    0xff2f1f14, // modalBgRaised
+    0xff4a3424, // modalBorder
+    0xff3e2b1d, // modalBorderMedium
+    0xfff6ead3, // modalText
+    0xffe3cfad, // modalTextSecondary
+    0xffc2a67e, // modalTextMuted
+    0xffebe1cb, // buttonBg
+    0xffc9b894, // buttonBorder
+    0xfff8eedb, // effectShellTitleInk
+    0xc2e7ecf6, // effectShellValueInk
+    0x06ffffff, // sgSurface
+    0xff8d9097, // sgFret
+    0xffe6e0cf, // sgNut
+    0x6bd6d8e0, // sgCapo
+    0x12ffffff, // sgOpenSlot
+    0xff121720, // sgDotFill
+    0xffc8ccd6, // sgDotEdge
+    0xfff2f3f7, // sgDotText
+    0xff3a3f49, // sgDimFill
+    0xffaab0bc, // sgDimText
+    0x8cdce0ec, // sgBoxLine
+    0xffe6e6ee, // sgBoxDot
+    0xff15151a, // sgBoxText
+};
+
 /// A theme of the web UI (core/ui/ts/themes.ts): its stored name, the name pickers show, whether
 /// it is dark, its colours, and the faces its text and its titles are set in.
 struct ThemeInfo
@@ -559,6 +652,7 @@ inline constexpr ThemeInfo kThemes[] = {
     {"high-gain", "Eleven", true, &kHighGain, "Oswald", "Oswald"},
     {"studio", "Studio", false, &kStudio, "Inter", "Inter"},
     {"studio-2003", "Studio 2003", false, &kStudio2003, "Inter", "Inter"},
+    {"studio-1973", "Studio 1973", true, &kStudio1973, "Inter", "Fraunces"},
 };
 
 /// The theme stored as `name`. A name earlier builds stored is the theme it became; any other is
