@@ -496,6 +496,9 @@ build_for_arch() {
             -DCMAKE_BUILD_TYPE=Release
             -DGUITARFX_ENABLE_LV2=$([[ "$BUILD_LV2" == true ]] && printf 'ON' || printf 'OFF')
             -DCMAKE_SUPPRESS_DEVELOPER_WARNINGS=ON
+            # The native (Nano Q) UI beside the WebView one, switched in Settings > User
+            # Interface. Passed explicitly so a build tree that cached it flips with
+            # --no-native-ui / --native-ui.
             -DSOUNDSHED_NANOQ_UI=$([[ "$NATIVE_UI" == true ]] && printf 'ON' || printf 'OFF')
         )
 
