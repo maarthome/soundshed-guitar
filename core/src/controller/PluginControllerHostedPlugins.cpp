@@ -48,6 +48,24 @@ void PluginController::AttachRuntimeConfigCallbacks(const std::string& presetId,
                         HandleRuntimeNodeConfigChanged(presetId, nodeId, key, value);
                     });
                 });
+
+            // A plugin that finished loading before this callback was attached (a session
+            // restored at start-up) announced its kind to nobody. Its node's colour in the UI
+            // comes from that kind, so hand it over now; a plugin still loading announces it
+            // itself through the callback above.
+            if (IsHostedPluginProcessor(*processor))
+            {
+                if (const auto category = processor->GetConfig("pluginCategory"); !category.empty())
+                {
+                    mHost.RunOnMainThread([this, alive = std::weak_ptr<const bool>(mAliveForPostedTasks), presetId,
+                                           nodeId = node.id, category]() {
+                        if (!alive.expired())
+                        {
+                            HandleRuntimeNodeConfigChanged(presetId, nodeId, "pluginCategory", category);
+                        }
+                    });
+                }
+            }
         }
     }
 }

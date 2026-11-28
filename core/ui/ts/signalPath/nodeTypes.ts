@@ -12,7 +12,7 @@ import { getFxEffectIcon } from "../iconAssets.js";
 import { DEFAULT_NODE_CLASS, NODE_CATEGORY_ALIASES, NODE_CLASSES } from "../generated/effectPresentation.js";
 import { deduplicateResourcesByHashAndPath, resolveResourceIdAlias } from "../resourceDedup.js";
 import { getLibraryResource } from "../resourceLibrary.js";
-import { effectGroupForBuiltIn, effectGroupForPluginCategory, getPluginCategoryForNode, type EffectGroupId } from "../effectGroups.js";
+import { effectGroupForBuiltIn, effectGroupForPluginCategory, getPluginCategoryForNode, getPluginGroupForResource, type EffectGroupId } from "../effectGroups.js";
 export function getNodeIcon(nodeType: string): string {
   return getFxEffectIcon(nodeType);
 }
@@ -162,7 +162,13 @@ export function getNodeEffectGroup(node: GraphNode): EffectGroupId {
   if (node.type === EffectGuids.kPluginHost) {
     // Kept in the node's config when the plugin loads (and so with the preset); else as reported.
     const category = node.config?.pluginCategory || getPluginCategoryForNode(node.id);
-    return category ? effectGroupForPluginCategory(category) : "utility";
+    if (category) {
+      return effectGroupForPluginCategory(category);
+    }
+    // Not reported yet (a session just restored): the kind this plugin showed when it last loaded.
+    const resources = (node as unknown as { resources?: Array<{ id?: unknown }> }).resources;
+    const resourceId = Array.isArray(resources) && typeof resources[0]?.id === "string" ? resources[0].id : "";
+    return getPluginGroupForResource(resourceId) || "utility";
   }
   return effectGroupForBuiltIn(getNodeCategory(node), getNodeEffectInfo(node)?.displayName ?? "");
 }
