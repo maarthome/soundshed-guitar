@@ -23,16 +23,12 @@
   --node-face: color-mix(in srgb, var(--effect-group-color) var(--effect-group-fill), var(--bg-card));
 }
 
-/* The text on a coloured box takes the ink picked for its group's face (ts/effectGroups.ts), so
-   the type line and the model badge stay readable on red, orange and yellow as well as blue. */
-:root[data-effect-colors="user"] .signal-node[data-effect-group] .node-name {
-  color: var(--effect-group-ink, #fff);
-}
-
-:root[data-effect-colors="user"] .signal-node[data-effect-group] .node-type,
-:root[data-effect-colors="user"] .signal-node[data-effect-group] .node-architecture-badge {
-  color: color-mix(in srgb, var(--effect-group-ink, #fff) 88%, transparent);
-  opacity: 1;
+/* The text on a coloured box is the clear name colour throughout, so the type line and the model
+   badge stay readable on red, orange and yellow as well as blue. A bypassed box keeps its dim look. */
+:root[data-effect-colors="user"] .signal-node[data-effect-group]:not(.bypassed) .node-name,
+:root[data-effect-colors="user"] .signal-node[data-effect-group]:not(.bypassed) .node-type {
+  color: var(--text-primary);
+  text-shadow: 0 1px 2px color-mix(in srgb, black 45%, transparent);
 }
 
 /* The plugin host's list rows and a hosted plugin's editor take the group colour too. A row
