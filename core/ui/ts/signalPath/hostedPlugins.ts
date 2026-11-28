@@ -16,6 +16,9 @@ import {
 } from "./state.js";
 import { getNodeResourceAtIndex, getResourceBaseName, getSelectedSignalPathNode } from "./nodeResources.js";
 import { updateEffectVisualization } from "./visualization.js";
+import { sendSignalPathNodeConfigUpdate } from "./commands.js";
+import { EffectTypeRegistry } from "../presetV2.js";
+import { EffectGuids } from "../effectGuids.js";
 export type HostedPluginLoadFailure = {
   selectionKey: string;
   resourceIndex?: number;
@@ -346,6 +349,21 @@ export function handleNodeResourceBrowseCancelled(payload: {
   }
   if (payload.nodeId) {
     clearHostedPluginLoadPending(payload.nodeId);
+  }
+}
+
+/**
+ * Clicking a hosted plugin's box in the chain opens the plugin's own window at once, the same as
+ * "Open plugin" in its panel. A node with no plugin chosen yet has nothing to open: its panel
+ * shows the list to choose from.
+ */
+export function openHostedPluginEditorOnClick(node: GraphNode): void {
+  if (EffectTypeRegistry.resolve(node.type) !== EffectGuids.kPluginHost) {
+    return;
+  }
+  const resource = getNodeResourceAtIndex(node, 0);
+  if (resource.id || resource.filePath) {
+    sendSignalPathNodeConfigUpdate(node.id, "showPluginEditor", "1", false);
   }
 }
 

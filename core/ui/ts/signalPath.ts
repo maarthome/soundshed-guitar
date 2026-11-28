@@ -71,6 +71,7 @@ export { showEngineNodeParamChange } from "./signalPath/engineParamChange.js";
 export { initSignalPathResize } from "./signalPath/layout.js";
 export { getSignalPathScrollHeight, scheduleSignalPathLayoutAdapt, setSignalPathScrollHeight, updateSignalPathLayoutAdapt } from "./signalPath/layout.js";
 export { handleHostedPluginResourceLoadCompleted, handleHostedPluginResourceLoadFailed, handleNodeResourceBrowseCancelled } from "./signalPath/hostedPlugins.js";
+import { openHostedPluginEditorOnClick } from "./signalPath/hostedPlugins.js";
 export { updateSelectedNodeAnalyzerPanel, updateSelectedNodeDspStatus, updateSelectedNodePeakMeter, updateSignalPathClipIndicators } from "./signalPath/telemetry.js";
 export { isNodeBypassed };
 export { initializeBlendEditorModal, openBlendEditorWithDefinition } from "./signalPathBlend.js";
@@ -1071,14 +1072,13 @@ function bindNodeClickHandlers(preset: Preset): void {
 
   nodeElements.forEach((element) => {
     const el = element as HTMLElement;
-    
-    // Click handler - select node
     el.addEventListener("click", () => {
       const nodeId = el.dataset.nodeId;
       if (nodeId && preset.graph) {
         const node = preset.graph.nodes.find((n) => n.id === nodeId);
         if (node) {
           selectNodeElement(node, el, true);
+          openHostedPluginEditorOnClick(node);
         }
       }
     });
