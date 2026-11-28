@@ -243,7 +243,34 @@ export function applyEffectGroupColorSettings(settings: EffectGroupColorSettings
     style.id = STYLE_ELEMENT_ID;
     document.head.appendChild(style);
   }
-  style.textContent = EFFECT_GROUPS.map(
-    (group) => `[data-effect-group="${group.id}"]{--effect-group-color:${groupColor(settings, group.id)}}`,
-  ).join("\n");
+  const fill = FILL_FRACTION[settings.strength];
+  style.textContent = EFFECT_GROUPS.map((group) => {
+    const color = groupColor(settings, group.id);
+    return `[data-effect-group="${group.id}"]{--effect-group-color:${color};--effect-group-ink:${inkFor(color, fill)}}`;
+  }).join("\n");
+}
+
+/** How much of a box's face is the group colour, per strength (css/effect-groups.css). */
+const FILL_FRACTION: Record<EffectColorStrength, number> = { subtle: 0.22, medium: 0.42, strong: 0.68 };
+
+/** The card colour the group colour is mixed into: dark in every theme the boxes are drawn on. */
+const CARD_RGB: readonly [number, number, number] = [38, 38, 46];
+
+/**
+ * The text colour for a box filled with `hex` at `fill`: white, or near-black on a face light
+ * enough that white would wash out (a yellow Dynamics box at full strength).
+ */
+function inkFor(hex: string, fill: number): string {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) {
+    return "#ffffff";
+  }
+  const value = parseInt(match[1], 16);
+  const channels = [(value >> 16) & 255, (value >> 8) & 255, value & 255].map((channel, index) => {
+    const mixed = (channel * fill + CARD_RGB[index] * (1 - fill)) / 255;
+    return mixed <= 0.03928 ? mixed / 12.92 : ((mixed + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  // The contrast with white (1.05 / (L + 0.05)) against that with near-black ((L + 0.05) / 0.06).
+  return 1.05 / (luminance + 0.05) >= (luminance + 0.05) / 0.06 ? "#ffffff" : "#16161c";
 }

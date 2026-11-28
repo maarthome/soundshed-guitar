@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+* **Readable text on coloured effect boxes (my_gui)**: with Effect box colours on User, the effect's type line and model badge are drawn in the same clear ink as its name, chosen light or dark to suit each group's colour, instead of the dim grey that was hard to read on red, orange and yellow boxes.
 * **Linux builds use ccache when it is installed (my_gui)**: `build_linux.sh` and `build_pi.sh` now compile through ccache if it is there, so a rebuild after a merge only compiles what changed. `GUITARFX_NO_CCACHE=1` turns it off.
 * **Hosted plugin colours survive a restart (my_gui)**: after restarting, plugins in the plugin host are coloured by their group again right away, instead of staying grey until chosen again.
 * **Plugin picker remembers its folder, and Your Presets opens the chain (my_gui)**: the plugin host's file picker now opens in the folder you last picked a plugin from, also after a restart. Choosing a preset in the preset list under the header, or in Tones > Your Presets, goes straight to the signal chain (the list closes; on a small screen you land on the chain rather than the effect) once it loads.
