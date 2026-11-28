@@ -1069,6 +1069,37 @@ void PluginProcessorAdapter::SendMessageToUI(const std::string& jsonMessage)
     }
 }
 
+namespace
+{
+/// Where the plugin picker last picked from, kept in the profile so it survives a restart.
+juce::File lastPluginBrowseFile()
+{
+    return soundshed::profileFolder().getChildFile("last-plugin-folder.txt");
+}
+
+/// The folder the plugin picker starts in: the last one a plugin was picked from, if it is
+/// still there; otherwise the dialog's own default.
+juce::File lastPluginBrowseFolder()
+{
+    const auto folder = juce::File(lastPluginBrowseFile().loadFileAsString().trim());
+    return folder.isDirectory() ? folder : juce::File();
+}
+
+/// Remembers the folder holding a picked plugin. A bundle (a directory such as Foo.lv2 or
+/// Foo.vst3) is picked from the folder around it; a file inside a bundle, from its own folder.
+void rememberPluginBrowseFolder(const juce::File& picked)
+{
+    const auto folder = picked.getParentDirectory();
+
+    if (folder.isDirectory())
+    {
+        const auto store = lastPluginBrowseFile();
+        store.getParentDirectory().createDirectory();
+        store.replaceWithText(folder.getFullPathName());
+    }
+}
+} // namespace
+
 void PluginProcessorAdapter::BrowseFileAsync(guitarfx::BrowseFileType type, const std::string& title,
                                              std::function<void(const guitarfx::BrowseFileResult&)> callback)
 {
@@ -1146,7 +1177,10 @@ void PluginProcessorAdapter::BrowseFileAsync(guitarfx::BrowseFileType type, cons
         break;
     }
 
-    mFileChooser = std::make_unique<juce::FileChooser>(juce::String(title), juce::File(), filters);
+    const juce::File startFolder =
+        type == guitarfx::BrowseFileType::PluginFile ? lastPluginBrowseFolder() : juce::File();
+
+    mFileChooser = std::make_unique<juce::FileChooser>(juce::String(title), startFolder, filters);
 
     const bool folderMode = type == guitarfx::BrowseFileType::Folder;
 
@@ -1190,6 +1224,11 @@ void PluginProcessorAdapter::BrowseFileAsync(guitarfx::BrowseFileType type, cons
         {
             result.success = true;
             result.path = soundshed::toStdPath(file);
+
+            if (type == guitarfx::BrowseFileType::PluginFile)
+            {
+                rememberPluginBrowseFolder(file);
+            }
         }
 
         if (callback)

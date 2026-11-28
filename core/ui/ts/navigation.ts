@@ -1,6 +1,6 @@
 import { getNavigationViewState, mergeNavigationViewState } from "./navigationState.js";
 import { postMessage } from "./bridge.js";
-import { isCompact } from "./compactMode.js";
+import { isCompact, isCompactStaged } from "./compactMode.js";
 import { flushShownViews } from "./deferredView.js";
 import { applyCompactStage, isCompactStage, setCompactStage, setCompactStageDetailLabel } from "./compactStage.js";
 import { initSettingsPanel, refreshTone3000ApiKeyField, activateEquipmentTab, activateLibraryTab, activateAdvancedSubTab, setSettingsViewStateSuppressed } from "./settings.js";
@@ -102,6 +102,17 @@ export function activateTab(tabId: string): void {
   });
 
   updateUiViewState({ presetTab: tabId });
+}
+
+/**
+ * Shows the signal chain: the Play panel, and on a compact screen where the chain and the
+ * effect take turns, the chain's turn. For a preset chosen from a list that covers it.
+ */
+export function showChainView(): void {
+  switchMainPanel("visualizer");
+  if (isCompactStaged()) {
+    setCompactStage("chain");
+  }
 }
 
 /** The standalone app menu's "Settings…" (⌘, on macOS). */

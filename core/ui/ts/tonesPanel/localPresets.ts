@@ -14,6 +14,7 @@ import { getPresetRating, isPresetFavorite, setPresetRating, toggleFavoritePrese
 import { getFilteredPresets } from "../presets/filter.js";
 import { findFolderById, getPresetFolderPath, isVirtualPresetFolderId, sortPresetFoldersAlphabetically } from "../presets/folders.js";
 import { applyPresetFromLibrary } from "../presets/load.js";
+import { showChainView } from "../navigation.js";
 import { onPresetUIRendered } from "../presets/refresh.js";
 import { PRESET_FOLDER_ALL_ID, PRESET_FOLDER_FAVORITES_ID, PRESET_FOLDER_RECENTS_ID } from "../presets/sorting.js";
 import { uiState } from "../state.js";
@@ -221,8 +222,14 @@ function handleGridClick(event: MouseEvent): void {
   }
 
   // Anywhere else on the card loads it; the Load button is the same thing for the keyboard.
-  // The load redraws the library, which redraws this (onPresetUIRendered).
-  void applyPresetFromLibrary(presetId);
+  // The load redraws the library, which redraws this (onPresetUIRendered). Then on to the
+  // chain, which is what a chosen pedalboard is for; a declined discard prompt stays here.
+  void applyPresetFromLibrary(presetId).then(() => {
+    const loading = uiState.presetLoadingId === presetId;
+    if (loading || (uiState.activePresetId === presetId && !uiState.presetDirty)) {
+      showChainView();
+    }
+  });
 }
 
 let bound = false;
