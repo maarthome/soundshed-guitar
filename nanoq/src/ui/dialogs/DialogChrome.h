@@ -150,12 +150,26 @@ class CheckBox final : public Pressable
         return mChecked;
     }
 
+    /// Drawn as a radio button (a ring, a dot when chosen): one of a group where one is chosen.
+    CheckBox& Radio(bool radio)
+    {
+        mRadio = radio;
+        return *this;
+    }
+
+    CheckBox& Enabled(bool enabled)
+    {
+        mEnabled = enabled;
+        return *this;
+    }
+
     [[nodiscard]] AccessInfo Describe() const override
     {
         AccessInfo info = Pressable::Describe();
-        info.role = AccessRole::CheckBox;
+        info.role = mRadio ? AccessRole::Tab : AccessRole::CheckBox;
         info.name = NameOr(mLabel);
-        info.toggled = mChecked ? 1 : 0;
+        info.toggled = mRadio ? -1 : (mChecked ? 1 : 0);
+        info.selected = mRadio && mChecked;
         return info;
     }
 
@@ -174,7 +188,29 @@ class CheckBox final : public Pressable
         const float cy = b.top + b.height() * 0.5f;
         const el::rect box{b.left + 0.5f, cy - 8.0f, b.left + 16.5f, cy + 8.0f};
 
-        if (mChecked)
+        if (mRadio)
+        {
+            const el::point centre{box.left + 8.0f, cy};
+            cnv.fill_style(mTheme.Bar().opacity(fade));
+            cnv.begin_path();
+            cnv.add_circle({centre, 8.0f});
+            cnv.fill();
+            cnv.stroke_style(
+                (mChecked || (mHover && mEnabled) ? mTheme.Accent() : mTheme.BorderStrong()).opacity(fade));
+            cnv.line_width(1.0f);
+            cnv.begin_path();
+            cnv.add_circle({centre, 7.5f});
+            cnv.stroke();
+
+            if (mChecked)
+            {
+                cnv.fill_style(mTheme.Accent().opacity(fade));
+                cnv.begin_path();
+                cnv.add_circle({centre, 4.0f});
+                cnv.fill();
+            }
+        }
+        else if (mChecked)
         {
             cnv.fill_style(mTheme.Accent().level(mHover ? 1.08f : 1.0f).opacity(fade));
             cnv.fill_round_rect(box, 4.0f);
@@ -208,6 +244,7 @@ class CheckBox final : public Pressable
     std::string mLabel;
     float mSize;
     bool mChecked = false;
+    bool mRadio = false;
 };
 
 /// A picker's trigger (the web UI's .metro-select-trigger and themed selects): the choice in a filled box with a
@@ -229,6 +266,7 @@ class PickerField final : public Pressable
         AccessInfo info = Pressable::Describe();
         info.role = AccessRole::ComboBox;
         info.value = mText;
+        info.expanded = 0;
         return info;
     }
 
@@ -402,7 +440,16 @@ class Segmented final : public el::element, public Drawn, public Focusable
     {
         AccessInfo info;
         info.role = AccessRole::ComboBox;
-        info.name = mAccessName;
+
+        // Unnamed, it is its choices ("All or Favourites"), so it is never read as its value alone.
+        if (info.name = mAccessName; info.name.empty())
+        {
+            for (const auto& option : mOptions)
+            {
+                info.name += (info.name.empty() ? "" : " or ") + option;
+            }
+        }
+
         info.value = mSelected >= 0 && mSelected < static_cast<int>(mOptions.size())
                          ? mOptions[static_cast<std::size_t>(mSelected)]
                          : std::string();
@@ -474,23 +521,61 @@ class Segmented final : public el::element, public Drawn, public Focusable
         mSelected = index;
     }
 
+    /// The theme flyout's App UI choice (.app-ui-choices): 28 tall at 12 px, edged in the light
+    /// border with a rule between the segments, the chosen one washed in the accent at 16%.
+    Segmented& Joined()
+    {
+        mJoined = true;
+        return *this;
+    }
+
+    /// What option `index` does, shown under a resting pointer (the web's title= on a segment).
+    Segmented& Tooltip(int index, std::string text)
+    {
+        if (index >= 0)
+        {
+            mTips.resize(std::max(mTips.size(), static_cast<std::size_t>(index) + 1));
+            mTips[static_cast<std::size_t>(index)] = std::move(text);
+        }
+
+        return *this;
+    }
+
+    /// A small badge after option `index`'s label, edged and lettered in the accent (.app-ui-beta).
+    Segmented& Badge(int index, std::string text)
+    {
+        if (index >= 0)
+        {
+            mBadges.resize(std::max(mBadges.size(), static_cast<std::size_t>(index) + 1));
+            mBadges[static_cast<std::size_t>(index)] = std::move(text);
+        }
+
+        return *this;
+    }
+
     el::view_limits limits(const el::basic_context& ctx) const override
     {
         float w = 0.0f;
 
-        for (const auto& option : mOptions)
+        for (std::size_t i = 0; i < mOptions.size(); ++i)
         {
-            w += mSegmentWidth > 0.0f
-                     ? mSegmentWidth
-                     : el::measure_text(ctx.canvas, option, Font(Weight::Medium).size(13.0f)).x + 32.0f;
+            w += SegmentWidth(ctx.canvas, i);
         }
 
-        return {{w, 34.0f}, {w, 34.0f}};
+        const float h = mJoined ? 28.0f : 34.0f;
+        return {{w, h}, {w, h}};
     }
 
     void draw(const el::context& ctx) override
     {
         NoteDrawn(ctx);
+
+        if (mJoined)
+        {
+            DrawJoined(ctx);
+            return;
+        }
+
         auto& cnv = ctx.canvas;
         const auto b = ctx.bounds;
         const auto font = Font(Weight::Medium).size(13.0f);
@@ -535,7 +620,8 @@ class Segmented final : public el::element, public Drawn, public Focusable
 
         if (const int i = Hit(ctx.bounds, btn.pos); i >= 0 && onSelect)
         {
-            onSelect(i);
+            const auto select = onSelect; // a copy: it may rebuild the controls this sits in
+            select(i);
         }
 
         return true;
@@ -551,6 +637,21 @@ class Segmented final : public el::element, public Drawn, public Focusable
             ctx.view.refresh(ctx);
         }
 
+        // A segment's own tooltip, over that segment.
+        if (const auto tip = hover >= 0 && static_cast<std::size_t>(hover) < mTips.size()
+                                 ? mTips[static_cast<std::size_t>(hover)]
+                                 : std::string();
+            !tip.empty() && static_cast<std::size_t>(hover) < mEdges.size())
+        {
+            const float left = hover == 0 ? ctx.bounds.left : mEdges[static_cast<std::size_t>(hover) - 1];
+            Tooltips::Hover(this, {left, ctx.bounds.top, mEdges[static_cast<std::size_t>(hover)], ctx.bounds.bottom},
+                            tip);
+        }
+        else
+        {
+            Tooltips::Leave(this);
+        }
+
         return false;
     }
 
@@ -559,6 +660,99 @@ class Segmented final : public el::element, public Drawn, public Focusable
         return true;
     }
 
+  private:
+    [[nodiscard]] static el::font_descr BadgeFont()
+    {
+        return Font(Weight::SemiBold).size(9.0f);
+    }
+
+    [[nodiscard]] std::string BadgeOf(std::size_t i) const
+    {
+        return i < mBadges.size() ? mBadges[i] : std::string();
+    }
+
+    [[nodiscard]] float BadgeWidth(el::canvas& cnv, std::size_t i) const
+    {
+        const auto badge = BadgeOf(i);
+        return badge.empty() ? 0.0f : TrackedWidth(cnv, badge, BadgeFont(), 0.06f) + 12.0f;
+    }
+
+    [[nodiscard]] float SegmentWidth(el::canvas& cnv, std::size_t i) const
+    {
+        if (mSegmentWidth > 0.0f)
+        {
+            return mSegmentWidth;
+        }
+
+        if (mJoined)
+        {
+            const float badge = BadgeWidth(cnv, i);
+            return el::measure_text(cnv, mOptions[i], Font(Weight::Medium).size(12.0f)).x + 20.0f +
+                   (badge > 0.0f ? 6.0f + badge : 0.0f);
+        }
+
+        return el::measure_text(cnv, mOptions[i], Font(Weight::Medium).size(13.0f)).x + 32.0f;
+    }
+
+    void DrawJoined(const el::context& ctx)
+    {
+        auto& cnv = ctx.canvas;
+        const auto b = ctx.bounds;
+        const auto font = Font(Weight::Medium).size(12.0f);
+        float x = b.left;
+        mEdges.clear();
+
+        for (std::size_t i = 0; i < mOptions.size(); ++i)
+        {
+            const float w = SegmentWidth(cnv, i);
+            const el::rect segment{x, b.top, x + w, b.bottom};
+            const bool chosen = static_cast<int>(i) == mSelected;
+            const bool hover = static_cast<int>(i) == mHover;
+
+            if (chosen || hover)
+            {
+                // Inside the rounded edge: the ends keep its corners.
+                auto state = cnv.new_state();
+                cnv.add_round_rect(b, 6.0f);
+                cnv.clip();
+                cnv.fill_style(chosen ? mTheme.Accent().opacity(0.16f) : mTheme.Text().opacity(0.06f));
+                cnv.fill_rect(segment);
+            }
+
+            // The label and its badge, centred together.
+            const float badgeW = BadgeWidth(cnv, i);
+            const float textW = el::measure_text(cnv, mOptions[i], font).x;
+            const float groupW = textW + (badgeW > 0.0f ? 6.0f + badgeW : 0.0f);
+            const float left = segment.left + (w - groupW) * 0.5f;
+            FillText(cnv, mOptions[i], font, chosen || hover ? mTheme.Text() : mTheme.TextSecondary(),
+                     el::rect{left, segment.top, left + textW + 1.0f, segment.bottom}, HAlign::Left);
+
+            if (badgeW > 0.0f)
+            {
+                const float cy = segment.top + segment.height() * 0.5f;
+                const el::rect badge{left + textW + 6.0f, cy - 7.0f, left + textW + 6.0f + badgeW, cy + 7.0f};
+                cnv.stroke_style(mTheme.Accent());
+                cnv.line_width(1.0f);
+                cnv.stroke_round_rect(badge.inset(0.5f, 0.5f), 4.0f);
+                FillTrackedText(cnv, BadgeOf(i), BadgeFont(), mTheme.Accent(), badge, HAlign::Centre, 0.06f);
+            }
+
+            if (i > 0)
+            {
+                cnv.fill_style(mTheme.Border());
+                cnv.fill_rect(el::rect{x, b.top + 1.0f, x + 1.0f, b.bottom - 1.0f});
+            }
+
+            mEdges.push_back(x + w);
+            x += w;
+        }
+
+        cnv.stroke_style(mTheme.Border());
+        cnv.line_width(1.0f);
+        cnv.stroke_round_rect(b.inset(0.5f, 0.5f), 6.0f);
+    }
+
+  public:
   private:
     bool Choose(int index)
     {
@@ -588,6 +782,9 @@ class Segmented final : public el::element, public Drawn, public Focusable
     const Theme& mTheme;
     std::vector<std::string> mOptions;
     float mSegmentWidth;
+    bool mJoined = false;
+    std::vector<std::string> mBadges;
+    std::vector<std::string> mTips;
     int mSelected = 0;
     int mHover = -1;
     mutable std::vector<float> mEdges; // each segment's right edge, as last drawn

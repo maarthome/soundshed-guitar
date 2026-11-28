@@ -109,6 +109,8 @@ EffectParamInfo EffectParam(const nlohmann::json& param)
             const bool isObject = entry.is_object();
             info.labelGroups.push_back(isObject ? entry.value("group", std::string{}) : std::string{});
             info.labelSubgroups.push_back(isObject ? entry.value("subgroup", std::string{}) : std::string{});
+            info.labelIcons.push_back(isObject ? entry.value("icon", std::string{}) : std::string{});
+            info.labelDetails.push_back(isObject ? entry.value("detail", std::string{}) : std::string{});
         }
     }
 
@@ -160,6 +162,58 @@ EffectPresetInfo EffectPreset(const nlohmann::json& preset, const std::string& d
     return info;
 }
 
+std::vector<CustomEffectEntry> CustomEffectLibrary(const nlohmann::json& entries)
+{
+    std::vector<CustomEffectEntry> result;
+
+    if (!entries.is_array())
+    {
+        return result;
+    }
+
+    const auto text = [](const nlohmann::json& e, const char* key) {
+        const auto it = e.find(key);
+        return it != e.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+
+    for (const auto& e : entries)
+    {
+        if (!e.is_object())
+        {
+            continue;
+        }
+
+        CustomEffectEntry entry;
+        entry.id = text(e, "id");
+        entry.name = text(e, "name");
+        entry.category = text(e, "category");
+        entry.description = text(e, "description");
+        entry.moduleResourceType = text(e, "moduleResourceType");
+        entry.moduleResourceId = text(e, "moduleResourceId");
+        entry.thumbnailDataUrl = text(e, "thumbnailDataUrl");
+
+        if (const auto params = e.find("defaultParams"); params != e.end() && params->is_object())
+        {
+            for (const auto& [key, value] : params->items())
+            {
+                if (value.is_number())
+                {
+                    entry.defaultParams[key] = value.get<double>();
+                }
+            }
+        }
+
+        if (entry.id.empty() || entry.moduleResourceId.empty())
+        {
+            continue;
+        }
+
+        result.push_back(std::move(entry));
+    }
+
+    return result;
+}
+
 std::vector<EffectTypeInfo> EffectCatalog(const nlohmann::json& catalog)
 {
     std::vector<EffectTypeInfo> result;
@@ -202,6 +256,36 @@ std::vector<EffectTypeInfo> EffectCatalog(const nlohmann::json& catalog)
                 {
                     info.presets.push_back(EffectPreset(preset, "factory"));
                 }
+            }
+        }
+
+        if (const auto found = entry.find("exposedResources"); found != entry.end() && found->is_array())
+        {
+            for (const auto& raw : *found)
+            {
+                if (!raw.is_object())
+                {
+                    continue;
+                }
+
+                ExposedResourceInfo slot;
+                slot.resourceId = raw.value("resourceId", std::string{});
+                slot.displayName = raw.value("displayName", std::string{});
+                slot.resourceType = raw.value("resourceType", std::string{});
+                // A composite's node has one slot per exposed resource, in declaration order; the
+                // index its definition gives is the inner node's slot (exposedResourceSlots.ts).
+                const int declaration = static_cast<int>(info.exposedResources.size());
+                slot.resourceIndex =
+                    info.type.rfind("composite:", 0) == 0 ? declaration : raw.value("resourceIndex", declaration);
+                slot.allowBrowseFile = raw.value("allowBrowseFile", true);
+                slot.parameterId = raw.value("parameterId", std::string{});
+
+                if (const auto value = raw.find("parameterValue"); value != raw.end() && value->is_number())
+                {
+                    slot.parameterValue = value->get<double>();
+                }
+
+                info.exposedResources.push_back(std::move(slot));
             }
         }
 

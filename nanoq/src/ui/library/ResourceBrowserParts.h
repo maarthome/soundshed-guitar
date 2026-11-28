@@ -48,6 +48,15 @@ inline std::string MetaText(const nlohmann::json& metadata, const char* key)
     return {};
 }
 
+/// A path compared as the web UI's folderFileLibraryMatch does: forward slashes, any case.
+inline std::string ComparablePath(std::string path)
+{
+    std::replace(path.begin(), path.end(), '\\', '/');
+    std::transform(path.begin(), path.end(), path.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return path;
+}
+
 /// A cached thumbnail file (the engine's resource-thumbnails cache), read once. Kept for the
 /// process and never destroyed: the drawing backend may be gone when statics are destroyed.
 inline std::shared_ptr<artist::image> CachedThumbnail(const std::string& path)
@@ -143,7 +152,11 @@ inline std::string Describe(const nlohmann::json& metadata, const std::string& c
         parts.push_back(arch.front() == 'A' ? arch : "A" + arch);
     }
 
-    if (const auto rate = MetaText(metadata, "sample_rate"); !rate.empty())
+    // The folder scanner files it as sampleRate; sample_rate is the older spelling.
+    auto rate = MetaText(metadata, "sampleRate");
+    rate = rate.empty() ? MetaText(metadata, "sample_rate") : rate;
+
+    if (!rate.empty())
     {
         parts.push_back(rate + " Hz");
     }
@@ -248,13 +261,14 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
     // A fixed picture slot at the left, as the web UI's Library, Folder and Tone3000 rows have:
     // the picture when there is one, else an empty box of the same size, so titles line up.
     bool pictureSlot = false;
-    std::string note;                                      // muted text at the right ("In library")
+    std::string note; // muted text at the right ("In library")
     el::color noteColour;
     std::string button; // a button at the right ("Select")
     bool selected = false;
     bool indent = false;      // a model under its tone (the Tone3000 tab's)
     bool groupMember = false; // a model under its pack's row: not indented, a bar down its left edge
-    int star = -1;        // -1: none; 0 or 1: the favourite star, off or on
+    bool dimmed = false;      // listed but not for this slot (a folder's file of the other type)
+    int star = -1;            // -1: none; 0 or 1: the favourite star, off or on
     std::function<void()> onClick, onDouble, onButton, onStar, onMenu;
 
     /// Icon buttons shown at the right while the row is hovered or chosen (.resource-browser-item-actions:
@@ -264,9 +278,16 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
         std::string icon;
         std::function<void(el::rect row)> onClick;
         bool enabled = true;
+        std::function<bool()> enabledIf; // read as it draws, when given (delete waits for the in-use answer)
+
+        [[nodiscard]] bool On() const
+        {
+            return enabledIf ? enabledIf() : enabled;
+        }
     };
 
     std::vector<Action> actions;
+    std::function<void()> onShown; // once, the first time it is drawn (a lazy ask, as the web's rows make)
 
     el::view_limits limits(const el::basic_context&) const override
     {
@@ -306,6 +327,13 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
         auto& cnv = ctx.canvas;
         auto b = ctx.bounds;
         bounds = b;
+
+        if (onShown)
+        {
+            const auto shown = std::move(onShown);
+            onShown = nullptr;
+            shown();
+        }
 
         if (indent)
         {
@@ -375,7 +403,7 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
             {
                 const el::rect r{right - 26.0f, cy - 13.0f, right, cy + 13.0f};
                 mActionRects[i] = r;
-                const bool hot = static_cast<int>(i) == mHoverAction && actions[i].enabled;
+                const bool hot = static_cast<int>(i) == mHoverAction && actions[i].On();
 
                 if (hot)
                 {
@@ -385,10 +413,10 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
 
                 const bool play = actions[i].icon == "ui-play";
                 mIcons.Draw(cnv, actions[i].icon, r.inset(6.5f, 6.5f),
-                            !actions[i].enabled ? mTheme.TextMuted().opacity(0.4f)
-                            : play              ? mTheme.Accent()
-                            : hot               ? mTheme.Ink()
-                                                : mTheme.TextSecondary());
+                            !actions[i].On() ? mTheme.TextMuted().opacity(0.4f)
+                            : play           ? mTheme.Accent()
+                            : hot            ? mTheme.Ink()
+                                             : mTheme.TextSecondary());
                 right = r.left - 4.0f;
             }
 
@@ -438,17 +466,19 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
 
         const auto titleFont = Font(Weight::SemiBold).size(12.0f);
         const auto detailFont = Font(Weight::Regular).size(10.5f);
+        const auto ink = dimmed ? mTheme.TextMuted() : mTheme.Ink();
 
         if (mDetail.empty())
         {
-            FillText(cnv, Ellipsize(cnv, mTitle, titleFont, right - x), titleFont, mTheme.Ink(),
+            FillText(cnv, Ellipsize(cnv, mTitle, titleFont, right - x), titleFont, ink,
                      el::rect{x, face.top, right, face.bottom}, HAlign::Left);
         }
         else
         {
-            FillText(cnv, Ellipsize(cnv, mTitle, titleFont, right - x), titleFont, mTheme.Ink(),
+            FillText(cnv, Ellipsize(cnv, mTitle, titleFont, right - x), titleFont, ink,
                      el::rect{x, face.top + 5.0f, right, face.top + 21.0f}, HAlign::Left);
-            FillText(cnv, Ellipsize(cnv, mDetail, detailFont, right - x), detailFont, mTheme.TextMuted(),
+            FillText(cnv, Ellipsize(cnv, mDetail, detailFont, right - x), detailFont,
+                     dimmed ? mTheme.TextMuted().opacity(0.7f) : mTheme.TextMuted(),
                      el::rect{x, face.top + 21.0f, right, face.bottom - 4.0f}, HAlign::Left);
         }
     }
@@ -479,7 +509,7 @@ class BrowserRow final : public el::element, public Focusable, public TapTarget
         {
             if (mActionRects[i].includes(btn.pos))
             {
-                if (actions[i].enabled && actions[i].onClick)
+                if (actions[i].On() && actions[i].onClick)
                 {
                     actions[i].onClick(bounds);
                 }
@@ -588,7 +618,7 @@ inline SlotRole RoleFor(const ClientState& state, const guitarfx::GraphNode& nod
         role.context =
             reverb ? "ir-reverb" : (resourceIndex > 0 ? "ir-cab#" + std::to_string(resourceIndex) : "ir-cab");
         role.gear = reverb ? "space" : "cab";
-        role.gears = {{"cab", "Cabinets"}, {"space", "Rooms"}, {"ir", "All IRs"}};
+        role.gears = {{"cab", "Cab IRs"}, {"space", "Room & Reverb IRs"}, {"ir", "All IRs"}};
         return role;
     }
 
@@ -616,8 +646,8 @@ inline SlotRole RoleFor(const ClientState& state, const guitarfx::GraphNode& nod
         role.gear = cabInPath ? "amp" : "full-rig";
     }
 
-    role.gears = {
-        {"full-rig", "Full Rigs"}, {"amp", "Amps"}, {"pedal", "Pedals"}, {"outboard", "Preamps"}, {"", "Any gear"}};
+    // The web UI's order and labels (TONE3000 category select); Preamps search the outboard gear.
+    role.gears = {{"amp", "Amps"}, {"pedal", "Pedals (FX)"}, {"outboard", "Preamps"}, {"full-rig", "Full Rigs"}};
     return role;
 }
 } // namespace nanoq::ui::resource_browser

@@ -83,6 +83,15 @@ struct LayoutSelection
                                                                             const std::string& effectType,
                                                                             const std::string& blendId);
 
+/// The library's default layout for an effect (or one blend of it, falling back to the effect's),
+/// or null: what the FX Library's card pictures (layoutRenderer.ts getCustomLayout).
+[[nodiscard]] const EffectLayout* DefaultLibraryLayout(const LayoutLibrary& library, const std::string& effectType,
+                                                       const std::string& blendId = {});
+
+/// The picture in an image data URL (png, jpeg, gif or webp, base64), or empty for anything
+/// else (utils.ts safeImageDataUrl).
+[[nodiscard]] std::string ImageDataUrlBytes(const std::string& dataUrl);
+
 [[nodiscard]] const EffectLayout* FindLayoutById(const LayoutLibrary& library, const std::string& layoutId,
                                                  const std::string& effectType, const std::string& blendId);
 
@@ -103,6 +112,32 @@ struct LayoutSelection
 [[nodiscard]] nlohmann::json RulesWithLayoutChoice(const nlohmann::json& appSettings, const ClientState& state,
                                                    const GraphNode& node, const std::string& layoutId,
                                                    const std::string& nowIso);
+
+/// The rules after adding `rule` (its id and time made here), replacing one for the same key,
+/// scope and keyword or preset: the web's setLayoutPreference. A keyword is trimmed and lower
+/// cased; a keyword or preset belongs only to its own scope.
+[[nodiscard]] nlohmann::json RulesWithLayoutPreference(const nlohmann::json& appSettings, LayoutPreferenceRule rule,
+                                                       const std::string& nowIso);
+
+/// The rules without the one with `ruleId` (removeLayoutPreference).
+[[nodiscard]] nlohmann::json RulesWithoutLayoutPreference(const nlohmann::json& appSettings, const std::string& ruleId);
+
+/// The rules for a node's lookup keys, in the order they were made (getLayoutPreferenceRulesForKeys).
+[[nodiscard]] std::vector<LayoutPreferenceRule> LayoutRulesForKeys(const nlohmann::json& appSettings,
+                                                                   const std::vector<std::string>& lookupKeys);
+
+/// Make or model words from a node's names to match a keyword rule on: three letters or more,
+/// not a plain number or a common word ("amp", "cab", "clean"...), at most `limit` of them
+/// (suggestLayoutKeywords).
+[[nodiscard]] std::vector<std::string> SuggestLayoutKeywords(const std::string& matchText, std::size_t limit = 6);
+
+/// A rule's scope as the picker's Rules tab names it: "This effect type", "Preset: <name>",
+/// "Matching \"<keyword>\"".
+[[nodiscard]] std::string LayoutRuleScopeLabel(const LayoutPreferenceRule& rule);
+
+/// Where the node's layout comes from, as the picker's note says it ("Currently set by a preset
+/// rule." ...).
+[[nodiscard]] std::string LayoutSourceNote(const LayoutSelection& selection);
 
 // ── Sizing (layoutScaling.ts) ───────────────────────────────────────────────────────────
 
@@ -199,9 +234,45 @@ inline constexpr double kLayoutDefaultKnobDiameter = 38.0;
 
 /// A size from a layout clamped to [lo, hi] and rounded, or nullopt when it is not a number.
 [[nodiscard]] std::optional<double> LayoutSizeValue(const std::optional<double>& value, double lo, double hi);
-[[nodiscard]] double LayoutKnobDiameter(const LayoutControlStyle& style);   // 16..512, default 38
-[[nodiscard]] double LayoutSliderLength(const LayoutControlStyle& style);   // 24..2048, default 80
-[[nodiscard]] LayoutSize LayoutToggleSize(const LayoutControlStyle& style); // 8..512 each, default 36 x 20
+[[nodiscard]] double LayoutKnobDiameter(const LayoutControlStyle& style); // 16..512, default 38
+[[nodiscard]] double LayoutSliderLength(const LayoutControlStyle& style); // 24..2048, default 80
+/// A switch's size: its own (8..512 each), else 36 wide and, from a strip or its pictures'
+/// shape, as high as that makes it, else 20 (imageToggleSize).
+[[nodiscard]] LayoutSize LayoutToggleSize(const LayoutControlStyle& style);
+
+/// Whether the style draws its toggle from pictures: a strip, or both an off and an on.
+[[nodiscard]] bool UsableToggleImage(const LayoutControlStyle& style);
+
+/// A filmstrip slider's size along and across its travel, which runs up a tall frame and across
+/// a wide one (stripSliderSize).
+struct LayoutStripSliderSize
+{
+    double width = 80.0;
+    double height = 20.0;
+    bool vertical = false;
+};
+
+[[nodiscard]] LayoutStripSliderSize StripSliderSize(const LayoutControlStyle& style, const LayoutImageStrip& strip);
+
+/// Gives each control the layout's knob picture and switch where it has none of its own and
+/// takes the layout's (withLayoutKnobImage, withLayoutSwitchImage). ParseEffectLayout does this.
+void ApplyLayoutControlImages(EffectLayout& layout);
+
+/// A knob's or toggle's shadow under the layout's light (controlShadowSvg): the footprint swept
+/// away from the light, as a hull in the control's own coordinates (its box from 0,0), drawn with
+/// round joins `radius` wide, blurred by `blur`, darkest at the control.
+struct ControlShadowShape
+{
+    std::vector<LayoutPoint> hull;
+    double radius = 0.0;
+    double blur = 0.0;
+    double opacity = 0.5;
+    LayoutPoint fadeFrom; // where the shadow is darkest...
+    LayoutPoint fadeTo;   // ...and where it has faded to 0.3 of that
+};
+
+[[nodiscard]] ControlShadowShape ControlShadowOf(const LayoutControlShadow& light, double width, double height,
+                                                 double radius);
 
 /// The control's image knob when it is usable (a face, and a frame count for a filmstrip).
 [[nodiscard]] const LayoutKnobImage* UsableKnobImage(const LayoutControlStyle& style);

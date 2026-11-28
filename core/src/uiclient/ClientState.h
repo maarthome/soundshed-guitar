@@ -71,6 +71,9 @@ struct EffectParamInfo
     // subgroup, so a menu can nest them. Empty, or one entry per label.
     std::vector<std::string> labelGroups;
     std::vector<std::string> labelSubgroups;
+    // And each label's picture (a picker icon name, "pickup-humbucker") and line of detail.
+    std::vector<std::string> labelIcons;
+    std::vector<std::string> labelDetails;
     // "picker" for an enum with too many labels to step through; empty for the default control.
     std::string control;
     // Shown only while the parameter `visibleWhenKey` holds one of `visibleWhenValues` (rounded):
@@ -88,6 +91,19 @@ struct EffectPresetInfo
     std::vector<std::string> parameterOrder; // a registry factory preset's apply order, if it has one
 };
 
+/// A resource slot an effect surfaces (the catalog's exposedResources): a composite's inner amp or
+/// cab, the IR Cabinet's A and B, a Custom Effect's guest files.
+struct ExposedResourceInfo
+{
+    std::string resourceId; // the slot's id, sent back as exposedResourceId
+    std::string displayName;
+    std::string resourceType; // "nam", "ir", "wasm", "blob"...
+    int resourceIndex = 0;    // where the node keeps its file
+    bool allowBrowseFile = true;
+    std::string parameterId;
+    std::optional<double> parameterValue;
+};
+
 struct EffectTypeInfo
 {
     std::string type;
@@ -97,17 +113,48 @@ struct EffectTypeInfo
     std::string resourceType;
     std::vector<EffectParamInfo> parameters;
     std::vector<EffectPresetInfo> presets;
+    std::vector<ExposedResourceInfo> exposedResources;
 
     [[nodiscard]] const EffectParamInfo* FindParam(const std::string& key) const;
 };
 
 /// A blend of NAM models (the blend library, state.blendLibrary): what a blend node plays.
+/// One model of a blend and the settings it was captured at (blendUtils.ts BlendModelMapping).
+/// `parameters` holds the values 0..1; a definition from before them has only parameterId and
+/// parameterValue, or neither.
+struct BlendModelMapping
+{
+    std::string modelId;
+    std::string parameterId;
+    std::optional<double> parameterValue;
+    std::map<std::string, double> parameters;
+};
+
 struct BlendSummary
 {
     std::string id;
     std::string name;
+    std::string category;                  // its gear: "amp", "pedal", "preamp", "full-rig", "cab" (or empty)
     std::string blendMode = "interpolate"; // "interpolate" or "snap"
     std::size_t modelCount = 0;
+    /// The models, in the definition's order: its mappings, else its plain model list.
+    std::vector<BlendModelMapping> mappings;
+    /// The parameters the definition lists, in its order (BlendMix.h MappedBlendParamIds).
+    std::vector<std::string> parameters;
+};
+
+/// A Custom Effect saved to the library (customEffectLibrary): a WebAssembly module with its
+/// name, settings and picture, added to a chain as a Custom Effect node that loads it.
+struct CustomEffectEntry
+{
+    std::string id;
+    std::string name;
+    std::string category;
+    std::string description;
+    std::string moduleResourceType;
+    std::string moduleResourceId;
+    std::string thumbnailDataUrl;
+    std::map<std::string, double> defaultParams;
 };
 
 struct LibraryResource
@@ -449,6 +496,9 @@ struct MixerState
     double masterGain = 1.0;
     double mixGainDb = 0.0; // the Multi-Rig's own level
     bool limiterEnabled = false;
+    /// What this instance runs for Full Level on Mono Outputs; a plugin instance keeps its own
+    /// from when it was added. Unknown until a full state says.
+    std::optional<bool> monoOutputUnity;
     std::vector<std::string> activePresetIds;
     std::map<std::string, std::string> presetNames;
     std::map<std::string, MixerSlot> slots; // by preset id
@@ -726,7 +776,8 @@ struct Notification
     enum class Kind
     {
         Info,
-        Error
+        Error,
+        Alert, // too long to read before a toast goes: a notice with OK (the web's showAlert)
     };
 
     Kind kind = Kind::Info;
@@ -791,6 +842,18 @@ struct ResourceFolderListing
     std::string error; // resourceFolderListingFailed
 };
 
+/// What the engine's input and output can carry ("inputModeChanged"), for the input mode control
+/// (InputMode.h): a mode they cannot deliver is greyed, and a fallback is said.
+struct InputCapabilities
+{
+    bool known = false;          // heard from the engine
+    bool hostControlled = false; // a DAW's track decides mono or stereo
+    int inputChannels = 2;
+    int outputChannels = 2;
+    std::string effectiveMode = "mono"; // what runs: "mono", "stereo" or "dualMono"
+    int dualMonoShared = 0;             // in dual mono, hosted plugins that still hear both sides
+};
+
 struct ClientState
 {
     bool haveState = false;
@@ -804,9 +867,31 @@ struct ClientState
     /// (hostedPluginResourceLoadCompleted or Failed) or the file dialog is cancelled.
     std::set<std::string> pluginLoadsPending;
 
+    /// Why a node's plugin did not load (hostedPluginResourceLoadFailed), by node, until the node
+    /// loads one or asks for another.
+    struct PluginLoadFailure
+    {
+        std::string resourceId;
+        std::string filePath;
+        std::string message;
+        std::string errorCode;
+    };
+
+    std::map<std::string, PluginLoadFailure> pluginLoadFailures;
+
     // The active preset (the engine's working copy) and where it came from.
     std::optional<Preset> activePreset;
     std::string activePresetId;
+
+    /// A composite effect being edited in the web UI (compositeEditState): while it lasts the
+    /// engine sends every UI's chain edits to its inner graph, not to the preset.
+    struct CompositeEdit
+    {
+        std::string id;
+        std::string name;
+    };
+
+    std::optional<CompositeEdit> compositeEdit;
     std::string activeSceneId;
     bool activePresetDirty = false;
     std::vector<std::string> missingNodeResources;
@@ -830,6 +915,7 @@ struct ClientState
 
     std::map<std::string, std::vector<LibraryResource>> resources; // by resource type
     std::vector<BlendSummary> blends;
+    std::vector<CustomEffectEntry> customEffects; // the saved Custom Effects (Topic::Catalog)
 
     /// What uses each library resource, by "type:id", as queryResourceUsage answered.
     struct ResourceUsage
@@ -841,6 +927,7 @@ struct ClientState
     std::map<std::string, ResourceUsage> resourceUsage;
 
     GlobalSignalChainConfig globalChain;
+    InputCapabilities inputCapabilities;
     bool outputMuted = false;
     MixerState mixer;
 
@@ -872,5 +959,11 @@ struct ClientState
 
     /// The active scene's title, or empty when the preset has one unnamed scene.
     [[nodiscard]] const PresetScene* ActiveScene() const;
+
+    /// Makes the active preset's working graph the active scene's, as the web UI's
+    /// selectPresetScene does. The engine sends a preset with scenes and no working graph of its
+    /// own, so parsing it leaves the first scene's chain in `graph`; without this every scene past
+    /// the first showed (and edited, as far as the user could see) the first scene's chain.
+    void UseActiveSceneGraph();
 };
 } // namespace guitarfx::uiclient

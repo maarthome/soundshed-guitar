@@ -40,14 +40,20 @@
 #include "uiclient/DspStatus.h"
 #include "uiclient/Metronome.h"
 #include "uiclient/UpdateCheck.h"
+#include "uiclient/VisualizerBackground.h"
 #include "uiclient/SignalFlow.h"
+#include "uiclient/BlendMix.h"
 #include "uiclient/ChainDropRules.h"
 #include "uiclient/ChainHistory.h"
 #include "uiclient/ChainLayout.h"
 #include "uiclient/EffectPresentation.h"
+#include "uiclient/ExposedResources.h"
 #include "uiclient/FeatureFlags.h"
+#include "uiclient/FxLibrary.h"
 #include "uiclient/FxMarks.h"
 #include "uiclient/InputLevelling.h"
+#include "uiclient/InputMode.h"
+#include "uiclient/LibraryManager.h"
 #include "uiclient/Instruments.h"
 #include "uiclient/LayoutMode.h"
 #include "uiclient/NodeLabels.h"
@@ -58,6 +64,7 @@
 #include "uiclient/Tone3000.h"
 #include "uiclient/ToneSharing.h"
 #include "uiclient/UiClient.h"
+#include "uiclient/UiClientParsing.h"
 #include "uiclient/UiClientParsing.h"
 #include "uiclient/UiCommands.h"
 #include "util/PathEncoding.h"
@@ -255,6 +262,52 @@ void TestClientMirrorsTheEngine()
     client.Send("requestState");
     Pump(controller, client);
     Expect(sessionCalls == 1, "an unsubscribed listener is not called");
+}
+
+// A scene past the first with a chain of its own: the client shows that scene's chain, and an
+// edit made there is seen. The engine sends a preset's scenes and no working graph, so the
+// parsed preset used to keep the first scene's chain whatever scene was active.
+void TestSecondSceneShowsItsOwnChain()
+{
+    LoopbackHost host(Sandbox("scenes"));
+    PluginController controller(host);
+    controller.Initialize();
+
+    UiClient client([&controller](const std::string& json) { controller.HandleUIMessage(json); });
+    host.client = &client;
+    UiCommands commands(client);
+
+    auto preset = BuildPreset("ps", "Scenes", 2);
+    auto& solo = preset.scenes[1].graph;
+    solo.nodes.insert(solo.nodes.begin() + 2, Node("gain_2", EffectGuids::kGain));
+    solo.edges = {GraphEdge{"__input__", "gain_1", 0, 0, 1.0}, GraphEdge{"gain_1", "gain_2", 0, 0, 1.0},
+                  GraphEdge{"gain_2", "__output__", 0, 0, 1.0}};
+    client.Send("savePreset", {{"saveMode", "overwrite"},
+                               {"presetId", preset.id},
+                               {"name", preset.name},
+                               {"preset", nlohmann::json::parse(PresetStorage::SerializeToJson(preset))}});
+    client.Start();
+    Pump(controller, client);
+    const auto& state = client.State();
+
+    commands.LoadPreset("ps");
+    Pump(controller, client);
+    commands.SelectScene("scene-2");
+    Pump(controller, client);
+    Expect(state.activeSceneId == "scene-2" && state.activePreset &&
+               state.activePreset->graph.FindNode("gain_2") != nullptr,
+           "the second scene shows its own chain");
+
+    commands.RemoveNode("gain_2");
+    Pump(controller, client);
+    Expect(state.activePreset && state.activePreset->graph.FindNode("gain_2") == nullptr,
+           "removing an effect in the second scene is seen");
+
+    commands.SelectScene("scene-1");
+    Pump(controller, client);
+    Expect(state.activePreset && state.activePreset->graph.FindNode("gain_2") == nullptr &&
+               state.activePreset->graph.FindNode("gain_1") != nullptr,
+           "the first scene shows its own chain again");
 }
 
 /// A factory archive's effect presets can choose its models, IRs and blends, which only the
@@ -535,6 +588,49 @@ void TestTone3000AndHttp()
         "tone3000: a search path");
     Expect(t3::ModelsPath("87866", 1, "2") == "/models?tone_id=87866&page=1&page_size=100&architecture=2",
            "tone3000: a models path");
+    Expect(t3::FavoritesPath(2) == "/tones/favorited?page=2&page_size=20", "tone3000: the favourites path");
+    Expect(t3::FormatCount(0) == "0" && t3::FormatCount(999) == "999" && t3::FormatCount(1234) == "1,234" &&
+               t3::FormatCount(1234567) == "1,234,567",
+           "tone3000: counts as the web writes them");
+    {
+        const std::string dot = " \xC2\xB7 ";
+        t3::Tone tone;
+        tone.id = "7";
+        tone.gear = "amp";
+        tone.creatorUsername = "mad";
+        tone.creatorName = "Mad Hatter";
+        tone.modelsCount = 3;
+        tone.downloads = 1234;
+        tone.platform = "nam";
+        Expect(t3::ToneMetaLine(tone, "nam", -1, false) ==
+                   "by mad" + dot + "3 models" + dot + "1,234 downloads" + dot + "nam",
+               "tone3000: a tone's line");
+        Expect(t3::ToneMetaLine(tone, "nam", 1, true) ==
+                   "amp" + dot + "by mad" + dot + "1 model" + dot + "1,234 downloads" + dot + "nam",
+               "tone3000: a favourite's line names its gear; a fetched count wins");
+        t3::Tone unknown = tone;
+        unknown.downloads = -1;
+        Expect(t3::ToneMetaLine(unknown, "nam", -1, false) == "by mad" + dot + "3 models" + dot + "nam",
+               "tone3000: downloads not known are left out");
+        Expect(t3::ParseTone(nlohmann::json{{"id", 1}}).downloads == -1 &&
+                   t3::ParseTone(nlohmann::json{{"id", 1}, {"downloads_count", 0}}).downloads == 0,
+               "tone3000: a missing downloads count is not known");
+
+        guitarfx::uiclient::ClientState state;
+        guitarfx::uiclient::LibraryResource a;
+        a.id = "tone3000:m1";
+        a.metadata = {{"provider", "tone3000"}, {"toneId", "7"}, {"modelId", "m1"}};
+        state.resources["nam"] = {a};
+        t3::Model m1, m2;
+        m1.id = "m1";
+        m2.id = "m2";
+        const std::vector<t3::Model> both{m1, m2}, one{m1};
+        Expect(t3::ToneImportedBadge(state, "nam", tone, &both) == "1/2 imported" &&
+                   t3::ToneImportedBadge(state, "nam", tone, &one) == "Imported" &&
+                   t3::ToneImportedBadge(state, "nam", tone, nullptr) == "1 imported" &&
+                   t3::ToneImportedBadge(state, "ir", tone, nullptr).empty(),
+               "tone3000: a tone's imported badge");
+    }
     Expect(t3::ThroughRelay("https://www.tone3000.com/api/v1/models/742072/download/x.nam") ==
                "https://api-guitar.soundshed.com/v1/resourcesearch/models/742072/download/x.nam",
            "tone3000: a model download goes through the relay");
@@ -714,6 +810,37 @@ void TestToneSharing()
            "an install that succeeded knows its presets");
     Expect(installs.count("e2") && installs.at("e2").detail == "Needs Tone3000 models", "one that failed knows why");
 
+    // Models that could not be downloaded are named in a notice with OK, once each.
+    (void)client.TakeNotifications();
+    client.Enqueue(
+        R"({"type":"presetArchivesInstalled","entryId":"e3","presetIds":["a","b"],"missingRemote":["Crunch","Crunch","Lead"]})");
+    client.DrainPending();
+    const auto notices = client.TakeNotifications();
+    Expect(notices.size() == 1 && notices[0].kind == guitarfx::uiclient::Notification::Kind::Alert &&
+               notices[0].detail.find("2 presets imported, but these models could not be downloaded and their slots "
+                                      "are left empty: Crunch, Lead.") == 0,
+           "missing models are an alert naming each once");
+    Expect(tones::MissingModelsNotice(1, {"Crunch"}).find("The preset was imported, but this model") == 0 &&
+               tones::MissingModelsNotice(1, {"Crunch"}).find("its slot is left empty: Crunch.") != std::string::npos,
+           "and one reads in the singular");
+
+    // The feed's wording, as the web's feed.ts and format.ts.
+    tones::Tone card;
+    card.creatorName = "Sam";
+    card.creatorHandle = "@sam_plays";
+    Expect(tones::CreatorLine(card) == "Sam (@sam_plays)", "a card names its creator and handle");
+    card.creatorName.clear();
+    Expect(tones::CreatorLine(card) == "@sam_plays", "or the handle alone");
+    Expect(tones::ModerationLabel("approved").empty() && tones::ModerationLabel("").empty(),
+           "approved content has no badge");
+    Expect(tones::ModerationLabel(" Pending_Review ") == "pending review", "other states read in lower case");
+    Expect(tones::NoMatchText("clean", "Blues") == "No community presets match \"clean\" with the tag \"Blues\".",
+           "a search with no results names the words and the tag");
+    Expect(tones::NoMatchText("", "") == "No community presets match.", "and neither when there are none");
+    Expect(tones::LoadedText(36, true) == "36 loaded" && tones::LoadedText(40, false) == "40 loaded, end of results" &&
+               tones::LoadedText(0, false).empty(),
+           "the feed counts what it has loaded");
+
     client.Enqueue(R"({"type":"installedPresetArchiveDeleted","id":"e1","presetIds":["user-9"]})");
     client.DrainPending();
     Expect(client.State().toneInstalls.count("e1") == 0, "a removed install is forgotten");
@@ -799,6 +926,119 @@ void TestChainLayoutWalksNestedSplits()
     Expect(layout.NodeBefore("c") == "inner" && layout.NodeBefore("d") == "innerMix" &&
                layout.NodeBefore("a") == "split",
            "NodeBefore follows nested branches");
+}
+
+// A NAM Blend's knobs as the web UI draws and plays them (blendUtils.ts, signalPathBlend.ts).
+void TestBlendMix()
+{
+    ClientState state;
+    BlendSummary blend;
+    blend.id = "b1";
+    blend.name = "Crunch";
+    blend.parameters = {"drive", "gain"};
+    blend.mappings = {{"m1", "gain", std::nullopt, {{"gain", 0.2}, {"drive", 0.5}}},
+                      {"m2", "gain", std::nullopt, {{"gain", 0.6}, {"drive", 0.5}}},
+                      {"m3", "gain", std::nullopt, {{"gain", 0.6}, {"drive", 0.9}}}};
+    state.blends.push_back(blend);
+
+    GraphNode node;
+    node.id = "n1";
+    node.type = EffectGuids::kAmpNamBlend;
+    node.config["blendId"] = "b1";
+
+    Expect(FindNodeBlend(state, node) != nullptr, "a blend node finds its blend by id");
+    Expect((MappedBlendParamIds(blend) == std::vector<std::string>{"drive", "gain"}),
+           "knobs follow the definition's order");
+
+    const auto range = ComputeBlendParamRange("gain", blend, std::nullopt);
+    Expect(std::abs(range.min - 2.0) < 1e-9 && std::abs(range.max - 6.0) < 1e-9 &&
+               std::abs(range.defaultValue - 6.0) < 1e-9,
+           "a knob spans the captured values on its own scale, its default their median");
+
+    // Unset, each knob starts at the median: gain 0.6, drive 0.5, which is m2 exactly.
+    Expect(BlendMatchLine(state, node, blend) == "Playing: m2", "at a capture, that model plays alone");
+
+    node.params["gain"] = 0.3;
+    Expect(BlendMatchLine(state, node, blend) == "Mix: m1 90% / m2 10%", "between two, both are named with shares");
+    node.config["blendModeOverride"] = "snap";
+    Expect(BlendMatchLine(state, node, blend) == "Playing: m1", "snap plays the nearest alone");
+
+    const auto target = BlendTarget(node, blend);
+    const auto gainPoints = BlendMappedPoints("gain", blend, target);
+    Expect(gainPoints.size() == 2 && std::abs(gainPoints[0].display - 2.0) < 1e-9 && gainPoints[0].selectable &&
+               gainPoints[1].selectable && !gainPoints[0].selected,
+           "gain marks both captures at drive 5, neither selected at 3");
+    const auto drivePoints = BlendMappedPoints("drive", blend, target);
+    Expect(drivePoints.size() == 2 && drivePoints[0].selected && !drivePoints[1].selectable,
+           "drive marks 5 as where it is; 9 is out of reach at gain 3");
+
+    auto moved = target;
+    moved["drive"] = 0.85;
+    const auto* closest = ClosestBlendMapping("drive", 0.85, blend, moved);
+    Expect(closest != nullptr && closest->modelId == "m3", "a snap turn lands on the nearest capture of that knob");
+    Expect(std::abs(NormalizeBlendValue(7.5, FindBlendParamSpec("gain")) - 0.75) < 1e-9 &&
+               std::abs(DenormalizeBlendValue(0.75, FindBlendParamSpec("gain")) - 7.5) < 1e-9,
+           "knob values are sent 0..1");
+
+    // No knob set and none captured: the Blend sweep.
+    BlendSummary sweep;
+    sweep.mappings = {{"a", "", std::nullopt, {}}, {"b", "", std::nullopt, {}}, {"c", "", std::nullopt, {}}};
+    const auto mix = SelectBlendMix(sweep.mappings, {}, 0.75, false);
+    Expect(mix && mix->primary == 1 && mix->secondary == 2 && std::abs(mix->secondaryWeight - 0.5) < 1e-9,
+           "the sweep places plain models evenly and mixes the two around it");
+}
+
+// A composite's slots and a Custom Effect's: what the effect editor draws a picker for and
+// what UiCommands names to the engine (exposedResourceSlots.ts, presetV2.ts).
+void TestExposedResourceSlots()
+{
+    const auto catalog = nlohmann::json::parse(R"([
+        {"type": "composite:amp-and-cab", "name": "Amp and Cab", "exposedResources": [
+            {"resourceId": "amp", "displayName": "Amp Model", "resourceType": "nam", "resourceIndex": 0},
+            {"resourceId": "cab", "displayName": "Cab IR", "resourceType": "ir", "resourceIndex": 0}]},
+        {"type": ")" + std::string(EffectGuids::kWasmHost) +
+                                               R"(", "name": "Custom Effect", "resourceType": "wasm",
+         "exposedResources": [{"resourceId": "module", "displayName": "Module", "resourceType": "wasm",
+                               "resourceIndex": 0}]}
+    ])");
+
+    ClientState state;
+    state.catalog = parse::EffectCatalog(catalog);
+
+    GraphNode composite;
+    composite.id = "c1";
+    composite.type = "composite:amp-and-cab";
+    const auto compositeSlots = NodeExposedResources(state, composite);
+    Expect(compositeSlots.size() == 2 && compositeSlots[0].resourceIndex == 0 && compositeSlots[1].resourceIndex == 1,
+           "a composite's slots are numbered in declaration order, whatever inner slot they forward to");
+    Expect(compositeSlots[1].displayName == "Cab IR" && compositeSlots[1].resourceType == "ir",
+           "a composite slot keeps its name and kind");
+
+    GraphNode wasm;
+    wasm.id = "w1";
+    wasm.type = EffectGuids::kWasmHost;
+    wasm.config["wasmGuestDescriptor"] =
+        nlohmann::json::array({
+                                  {{"key", "name"}, {"value", "Sampler"}},
+                                  {{"key", "resource.samples.title"}, {"value", "Samples"}},
+                                  {{"key", "resource.samples.type"}, {"value", "wav"}},
+                                  {{"key", "resource.samples.allowBrowseFile"}, {"value", "false"}},
+                                  {{"key", "resource.table.name"}, {"value", "Table"}},
+                                  {{"key", "resource.module.title"}, {"value", "Shadowed"}},
+                                  {{"key", "resource.bad-id.title"}, {"value", "Ignored"}},
+                              })
+            .dump();
+    const auto wasmSlots = NodeExposedResources(state, wasm);
+    Expect(wasmSlots.size() == 3 && wasmSlots[0].resourceId == "module" && wasmSlots[0].resourceIndex == 0,
+           "a Custom Effect keeps its module slot first, and an id the host uses is not declared again");
+    Expect(wasmSlots[1].resourceId == "samples" && wasmSlots[1].resourceIndex == 1 &&
+               wasmSlots[1].displayName == "Samples" && wasmSlots[1].resourceType == "wav" &&
+               !wasmSlots[1].allowBrowseFile,
+           "a declared slot takes the next index, its title, type and browse flag");
+    Expect(wasmSlots[2].resourceId == "table" && wasmSlots[2].resourceIndex == 2 &&
+               wasmSlots[2].displayName == "Table" && wasmSlots[2].resourceType == "blob" &&
+               wasmSlots[2].allowBrowseFile,
+           "a slot with only a name is a blob that can be browsed for");
 }
 
 void TestNodeArchitectureBadge()
@@ -1084,6 +1324,29 @@ void TestEffectPresentationTable()
            "category colours, with pedal folded into amp");
     Expect(table.NodeClass("channel") == "amp" && table.NodeClass("drive") == "utility",
            "node classes as the web UI's");
+    Expect(table.BlendCategory("pedal") == "utility" && table.BlendCategory("cab") == "cab" &&
+               table.BlendCategory("full-rig") == "amp" && table.BlendCategory("") == "amp",
+           "a blend's gear puts it in an FX Library category");
+
+    // The FX Library's blends and saved Custom Effects, and the nodes they add (catalog.ts).
+    ClientState state;
+    state.blends.push_back({"b1", "Edge Blend", "pedal"});
+    state.customEffects = parse::CustomEffectLibrary(nlohmann::json::parse(R"([
+        {"id":"ce1","name":"Fuzz Lab","category":"drive","description":"a fuzz","moduleResourceType":"wasm",
+         "moduleResourceId":"m1","defaultParams":{"gain":0.5,"bad":"x"}},
+        {"id":"ce2","name":"No module"}])"));
+    const auto blends = BlendFxItems(state, table);
+    Expect(blends.size() == 1 && blends[0].type == EffectGuids::kAmpNamBlend && blends[0].category == "utility" &&
+               blends[0].Key() == std::string(EffectGuids::kAmpNamBlend) + "|b1|" &&
+               blends[0].options.config.at("blendId") == "b1" && blends[0].options.label == "Edge Blend" &&
+               blends[0].options.category == "pedal",
+           "a blend adds a blend node naming it");
+    const auto custom = CustomEffectFxItems(state);
+    Expect(custom.size() == 1 && custom[0].type == EffectGuids::kWasmHost && custom[0].category == "drive" &&
+               custom[0].description == "a fuzz" && custom[0].Key() == std::string(EffectGuids::kWasmHost) + "||ce1" &&
+               custom[0].options.params == std::map<std::string, double>{{"gain", 0.5}} &&
+               custom[0].options.resources.size() == 1 && custom[0].options.resources[0].id == "m1",
+           "a saved Custom Effect adds its module with its settings; one without a module is left out");
     Expect(table.EquipmentImage(EffectGuids::kDelayTape, "delay") == "images/equipment/fx/studio-rack-delay.png" &&
                table.EquipmentImage("fx_nam", "amp") == "images/equipment/pedals/colourful-pedal2.png",
            "stock artwork by effect, legacy id and category");
@@ -1168,6 +1431,136 @@ void TestFeatureFlagsAndFxMarks()
 }
 
 // The preset bar's back and forward, as presets/history.ts keeps it.
+void TestFolderFileRows()
+{
+    using guitarfx::uiclient::ResourceFolderListing;
+    ResourceFolderListing::File model;
+    model.name = "Plexi Crunch.nam";
+    model.resourceType = "nam";
+    model.metadata = {{"architectureVersion", "2"}, {"gearMake", "Marshall"}, {"gearModel", "Marshall Plexi"},
+                      {"toneType", "hi_gain"},      {"sampleRate", 48000},    {"tags", "bright; crunch,bright"}};
+    const std::string dot = " \xC2\xB7 ";
+    Expect(FolderFileMetaLine(model, "nam", nullptr) ==
+               "A2" + dot + "Marshall Plexi" + dot + "hi gain" + dot + "48000 Hz" + dot + "bright, crunch",
+           "a folder model's line: architecture, gear, tone type, rate, tags");
+    Expect(FolderFileMetaLine(model, "ir", nullptr).rfind("NAM" + dot, 0) == 0,
+           "a folder file of the other type says what it is");
+
+    ResourceFolderListing::File ir;
+    ir.name = "4x12.wav";
+    ir.resourceType = "ir";
+    ir.metadata = {{"channels", 2}, {"durationSec", "0.5"}, {"sampleRate", 44100}, {"toneTags", "v30"}};
+    Expect(FolderFileMetaLine(ir, "ir", nullptr) == "2 ch" + dot + "0.5 s" + dot + "44100 Hz" + dot + "v30",
+           "a folder IR's line: channels, length, rate, tags");
+
+    guitarfx::uiclient::LibraryResource entry;
+    entry.tags = {"mine"};
+    Expect(FolderFileTags(ir, &entry) == std::vector<std::string>{"mine"}, "a library file shows its entry's tags");
+
+    Expect(FormatBytes(0) == "0 B" && FormatBytes(512) == "512 B" && FormatBytes(1536) == "1.5 KB" &&
+               FormatBytes(5 * 1024 * 1024) == "5.0 MB",
+           "sizes as the web writes them");
+    Expect(FolderFileDisplayName(ir) == "4x12", "a file's name without its extension");
+    model.metadata["namName"] = "Plexi (recorded)";
+    Expect(FolderFileDisplayName(model) == "Plexi (recorded)", "a model's recorded name first");
+
+    const nlohmann::json tone = {{"toneId", "7"}, {"imageUrl", "https://x/y.png"}};
+    const auto saved = BuildFolderImport(model, &tone, "amp", "D:/Models");
+    Expect(saved.name == "Plexi (recorded)" && saved.category == "amp" &&
+               saved.tags == std::vector<std::string>{"bright", "crunch"} &&
+               saved.metadata.value("toneId", "") == "7" && saved.metadata.value("origin", "") == "folder-browser" &&
+               saved.metadata.value("sourceFileName", "") == "Plexi Crunch.nam" &&
+               saved.metadata.value("sourceFolder", "") == "D:/Models",
+           "a folder file saves with its name, the slot's category, its tags and the tone it matched");
+    const auto edited = BuildFolderImport(model, nullptr, "amp", "D:/Models", std::string(" Mine "),
+                                          std::string("Amps"), std::vector<std::string>{"a"});
+    Expect(edited.name == "Mine" && edited.category == "Amps" && edited.tags == std::vector<std::string>{"a"} &&
+               !edited.metadata.contains("toneId"),
+           "an edit's name, category and tags win");
+}
+
+void TestResourceBrowserSlotHints()
+{
+    const std::vector<std::string> categories{"Amps", "Cabinet IRs", "Full Rig", "Pedals", "Reverb Rooms"};
+    Expect(ResolveLibraryCategoryFromHint("reverb", categories) == std::optional<std::string>("Reverb Rooms"),
+           "a slot's hint: the reverb picker opens on the reverbs");
+    Expect(ResolveLibraryCategoryFromHint("ir", categories) == std::optional<std::string>("Cabinet IRs"),
+           "a slot's hint: ir is a cab");
+    Expect(ResolveLibraryCategoryFromHint("full-rig", categories) == std::optional<std::string>("Full Rig"),
+           "a slot's hint: a full rig by keyword");
+    Expect(ResolveLibraryCategoryFromHint("amp", {"Full Amp", "Amps"}) == std::optional<std::string>("Amps"),
+           "a slot's hint: amp is not a full one");
+    Expect(ResolveLibraryCategoryFromHint("Pedals", categories) == std::optional<std::string>("Pedals"),
+           "a slot's hint: the same name, any case");
+    Expect(!ResolveLibraryCategoryFromHint("reverb", {"Amps"}) && !ResolveLibraryCategoryFromHint(" ", categories),
+           "a slot's hint: none when the library has no such category");
+
+    guitarfx::uiclient::LibraryResource model;
+    model.description = "Bright";
+    model.metadata = {{"provider", "tone3000"},
+                      {"toneId", 42},
+                      {"toneTitle", " Plexi "},
+                      {"gear", "amp"},
+                      {"sourceUrl", "https://www.tone3000.com/tones/plexi-42?ref=x"},
+                      {"creatorName", "Ann"}};
+    const auto tone = tone3000::SourceToneOf(model);
+    Expect(tone && tone->id == "42" && tone->title == "Plexi" && tone->gear == "amp" && tone->slug == "plexi-42" &&
+               tone->creatorName == "Ann" && tone->description == "Bright",
+           "a library model's source tone, from its import metadata");
+    model.metadata = {{"provider", "tone3000"}, {"groupId", "7"}};
+    Expect(tone3000::SourceToneOf(model) && tone3000::SourceToneOf(model)->title == "Tone3000 pack 7",
+           "a source tone by its group id, named for it");
+    model.metadata = {{"provider", "local"}, {"toneId", "7"}};
+    Expect(!tone3000::SourceToneOf(model), "no source tone for an entry not from Tone3000");
+}
+
+void TestCompositeEditMode()
+{
+    // The web UI's composite editor: every UI hears it start and end, and Nano Q can cancel it.
+    std::vector<std::string> sent;
+    UiClient client([&sent](const std::string& m) { sent.push_back(m); });
+    client.Enqueue(R"({"type":"compositeEditState","compositeId":"c1","name":"Stack","definition":{}})");
+    client.DrainPending();
+    Expect(client.State().compositeEdit && client.State().compositeEdit->name == "Stack", "composite edit starts");
+    UiCommands(client).CancelCompositeEdit();
+    Expect(!sent.empty() && nlohmann::json::parse(sent.back()).value("type", "") == "exitCompositeEditMode" &&
+               nlohmann::json::parse(sent.back()).value("save", true) == false,
+           "cancelled without saving");
+    client.Enqueue(R"({"type":"compositeEditModeExited","compositeId":"c1"})");
+    client.DrainPending();
+    Expect(!client.State().compositeEdit, "composite edit ends");
+}
+
+void TestCompositePresetSearch()
+{
+    ClientState state;
+    state.presetList = {{"a", "Clean Chime", "Clean", "user"}, {"b", "Crunch Box", "Crunch", "user"}};
+    state.mixer.compositePresets = {{"r1", "Live Pair", "For the gig", {" Live ", "stage"}, {"a", "b"}},
+                                    {"r2", "Studio", "", {"live"}, {"a", "gone"}}};
+
+    const auto ids = [](const std::vector<const CompositePreset*>& list) {
+        std::vector<std::string> out;
+
+        for (const auto* rig : list)
+        {
+            out.push_back(rig->id);
+        }
+
+        return out;
+    };
+
+    Expect(CompositeSlotNames(state, state.mixer.compositePresets[1]) ==
+               std::vector<std::string>{"Clean Chime", "gone"},
+           "a Multi-Rig's presets by name, an unknown id as it is");
+    Expect(ids(FilterCompositePresets(state, "  ")) == std::vector<std::string>{"r1", "r2"}, "no text keeps all");
+    Expect(ids(FilterCompositePresets(state, "GIG")) == std::vector<std::string>{"r1"}, "the description, any case");
+    Expect(ids(FilterCompositePresets(state, "stage")) == std::vector<std::string>{"r1"}, "a tag");
+    Expect(ids(FilterCompositePresets(state, "crunch")) == std::vector<std::string>{"r1"}, "a preset's name");
+    Expect(ids(FilterCompositePresets(state, "nothing")).empty(), "no match");
+    Expect(CompositePresetTags(state.mixer.compositePresets) == std::vector<std::string>{"live", "stage"},
+           "tags trimmed, lower case, once each, sorted");
+}
+
 void TestPresetTrail()
 {
     PresetTrail trail;
@@ -1841,6 +2234,76 @@ void TestAutomation()
                "MIDI Learn for this preset learns into the preset's own slot");
         RunMidiLearnMenuAction(commands, state, MidiLearnMenuAction::Cancel, *target);
         Expect(automation.midiLearnSlotId.empty(), "Cancel stops listening");
+
+        // An effect's on/off, learned on one node as a toggle: the slot names the node, and the
+        // captured mapping toggles.
+        GraphNode gain;
+        gain.id = "gain-node-1";
+        gain.type = EffectGuids::kGain;
+        const auto power = NodeBypassLearnTarget(state, gain);
+        Expect(power && power->address == std::string("node.") + EffectGuids::kGain + ".enabled" &&
+                   power->label == "Gain: On/Off" && power->nodeId == gain.id,
+               "an effect's on/off drives node.<type>.enabled, for its node");
+
+        if (power)
+        {
+            items = BuildMidiLearnMenuItems(automation, *power, state.activePresetId);
+            Expect(items.size() == 3 && items[1].action == MidiLearnMenuAction::LearnPreset &&
+                       items[1].hint == "127 on, 0 off" && items[2].action == MidiLearnMenuAction::LearnPresetToggle,
+                   "an on/off offers a latch and a toggle for this preset");
+            RunMidiLearnMenuAction(commands, state, MidiLearnMenuAction::LearnPresetToggle, *power);
+            Pump(controller, client);
+            const auto* tied =
+                FindPresetSlotForAddress(automation.slots, state.activePresetId, power->address, gain.id);
+            Expect(tied != nullptr && tied->nodeSelector == NodeSelectorFor(gain.id) &&
+                       automation.midiLearnSlotId == tied->slotId,
+                   "the per-preset slot is tied to the node and armed");
+            controller.EnqueueMidi(MidiEvent{0xB0, 64, 127, 0});
+            controller.ProcessQueuedMidi();
+            Pump(controller, client);
+            tied = FindPresetSlotForAddress(automation.slots, state.activePresetId, power->address, gain.id);
+            Expect(tied != nullptr && tied->midiMap && tied->midiMap->mode == kMidiModeToggle,
+                   "the toggle learn captures a Toggle mapping");
+            Expect(FindPresetSlotForAddress(automation.slots, state.activePresetId, power->address, "other-node") ==
+                       nullptr,
+                   "another node of the type has no mapping of its own");
+
+            if (tied != nullptr && tied->midiMap)
+            {
+                auto changed = *tied->midiMap;
+                changed.mode = kMidiModeAbsolute;
+                commands.SetAutomationMidiMap(tied->slotId, changed);
+                Pump(controller, client);
+                tied = FindPresetSlotForAddress(automation.slots, state.activePresetId, power->address, gain.id);
+                Expect(tied != nullptr && tied->midiMap && tied->midiMap->mode == kMidiModeAbsolute &&
+                           tied->midiMap->controller == 64,
+                       "the mode picker changes the mode and keeps the control");
+            }
+        }
+    }
+
+    // The node selector, and a mapping from before selectors, which any node of its type may take.
+    Expect(NodeSelectorFor("abc") == "id:abc" && NodeIdFromSelector("id:abc") == "abc" &&
+               NodeIdFromSelector("first").empty(),
+           "a node selector names its node");
+    {
+        std::vector<AutomationSlotInfo> slots(3);
+        slots[0].slotId = "preset.1";
+        slots[0].presetId = "p";
+        slots[0].address = "node.x.enabled";
+        slots[0].nodeSelector = "id:a";
+        slots[1].slotId = "preset.2";
+        slots[1].presetId = "p";
+        slots[1].address = "node.x.enabled";
+        slots[2].slotId = "preset.3";
+        slots[2].presetId = "q";
+        slots[2].address = "node.x.enabled";
+        const auto* a = FindPresetSlotForAddress(slots, "p", "node.x.enabled", "a");
+        const auto* b = FindPresetSlotForAddress(slots, "p", "node.x.enabled", "b");
+        const auto* any = FindPresetSlotForAddress(slots, "p", "node.x.enabled");
+        Expect(a != nullptr && a->slotId == "preset.1" && b != nullptr && b->slotId == "preset.2" && any != nullptr &&
+                   any->slotId == "preset.1",
+               "a node finds its own mapping, else an untied one; no node takes the first");
     }
 
     // ── Keyboard mappings, run by the engine ──
@@ -2097,6 +2560,164 @@ void TestUpdateCheckVersions()
     Expect(IsVersionNewer("1.10.0", "1.9.9") && !IsVersionNewer("1.6.0", "1.6.0") && !IsVersionNewer("1.5.9", "1.6.0"),
            "compared part by part, numerically");
     Expect(!IsVersionNewer("garbage", "1.0.0") && !IsVersionNewer("2.0.0", ""), "an unreadable side is never newer");
+
+    // Release notes as the update dialog draws them.
+    const auto notes = ReleaseNoteLines("\n## What's new\r\n\n\n- **Faster** NAM\n* See [the guide](https://x.y/z)\n> "
+                                        "Note ![pic](http://a/b.png)\nPlain *text*\n\n");
+    Expect(notes.size() == 6, "a leading and trailing blank go, and a run of blanks is one");
+    Expect(notes[0].kind == ReleaseNoteLine::Kind::Heading && notes[0].level == 2 && notes[0].text == "What's new",
+           "a heading, its level and text");
+    Expect(notes[1].kind == ReleaseNoteLine::Kind::Blank, "the blank under the heading");
+    Expect(notes[2].kind == ReleaseNoteLine::Kind::Bullet && notes[2].text == "Faster NAM", "a bullet, emphasis out");
+    Expect(notes[3].kind == ReleaseNoteLine::Kind::Bullet && notes[3].text == "See the guide", "a link as its label");
+    Expect(notes[4].kind == ReleaseNoteLine::Kind::Quote && notes[4].text == "Note pic",
+           "a quote, an image as its label");
+    Expect(notes[5].kind == ReleaseNoteLine::Kind::Text && notes[5].text == "Plain text", "text");
+    Expect(ReleaseNotesFirstLine("\n\n# **v1.9** is out\nMore") == "v1.9 is out", "the banner's first line, plain");
+}
+
+// The input mode control's choices, as inputMode.ts: greyed with what they need, the track in a
+// DAW, and what runs when it is not what was chosen.
+// Settings > Library's Resource Library (libraryView.ts): where each entry came from, the filters,
+// the tone groups and what Remove unused offers.
+void TestLibraryManager()
+{
+    namespace lm = library_manager;
+    ClientState state;
+    const auto resource = [](std::string id, std::string name, std::string category, std::string path,
+                             nlohmann::json metadata) {
+        guitarfx::uiclient::LibraryResource r;
+        r.id = std::move(id);
+        r.name = std::move(name);
+        r.category = std::move(category);
+        r.filePath = std::move(path);
+        r.metadata = std::move(metadata);
+        return r;
+    };
+    state.resources["nam"] = {
+        resource("a", "Crunch A", "Amp", "C:/Users/x/AppData/Soundshed/resources/content/tone3000/a.nam",
+                 {{"toneId", "7"}, {"toneTitle", "Plexi Pack"}, {"authorUsername", "maker"}}),
+        resource("b", "Crunch B", "Amp", "C:/Users/x/AppData/Soundshed/resources/content/tone3000/b.nam",
+                 {{"provider", "tone3000"}, {"toneId", "7"}, {"toneTitle", "Plexi Pack"}}),
+        resource("c", "Clean", "", "D:/Rigs/clean.nam", {{"creatorName", "Someone"}}),
+        resource("d", "Lead", "Pedal", "C:/Users/x/Documents/lead.nam", nlohmann::json::object()),
+    };
+    state.resources["ir"] = {
+        resource("e", "Cab 4x12", "Cab", "C:/x/resources/content/presetarchive/cab.wav",
+                 {{"provider", "presetArchive"}}),
+    };
+    state.resources["nam"][3].fileMissing = true;
+
+    Expect(lm::Origin(*lm::AllItems(state)[0].resource) == "Tone3000" &&
+               lm::Origin(state.resources["nam"][2]) == "Built-in" &&
+               lm::Origin(state.resources["nam"][3]) == "Local" && lm::Origin(state.resources["ir"][0]) == "Imported",
+           "an entry's origin is its provider, else its file's place");
+
+    const auto all = lm::AllItems(state);
+    Expect(all.size() == 5 && all[0].type == "nam" && all[4].type == "ir", "models first, then IRs");
+    Expect(lm::Categories(all) == std::vector<std::string>{"Amp", "Cab", "Pedal"} &&
+               lm::Creators(all) == std::vector<std::string>{"maker", "presetArchive", "Someone", "tone3000"},
+           "the category and creator choices come from the entries (a provider stands in for a creator)");
+
+    lm::Filter filter;
+    filter.type = "nam";
+    Expect(lm::Filtered(state, filter).size() == 4, "the type filter");
+    filter.source = "local";
+    Expect(lm::Filtered(state, filter).size() == 1, "the source filter");
+    filter = {};
+    filter.query = "SOMEONE";
+    Expect(lm::Filtered(state, filter).size() == 1 && lm::Filtered(state, filter)[0].resource->id == "c",
+           "the search reads the creator, in any case");
+    filter = {};
+    filter.creator = "maker";
+    Expect(lm::Filtered(state, filter).size() == 1, "the creator filter");
+
+    const auto groups = lm::GroupByTone(all);
+    Expect(groups.size() == 1 && groups[0].title == "Plexi Pack" && groups[0].items.size() == 2 &&
+               groups[0].typeLabel == "Amp Model" && groups[0].originLabel == "Tone3000" &&
+               lm::GroupMeta(groups[0]) ==
+                   "Amp Model \xC2\xB7 Amp \xC2\xB7 Tone3000 \xC2\xB7 2 models \xC2\xB7 by maker",
+           "entries of one tone are grouped, and ones with none left out");
+    Expect(lm::RowMeta(all[2]) == "Amp Model \xC2\xB7 Uncategorized \xC2\xB7 Built-in \xC2\xB7 by Someone",
+           "a row's meta line");
+    Expect(lm::Summary(3, 5, false) == "Showing 3 of 5 resources" &&
+               lm::Summary(1, 5, true) == "Showing 1 of 5 resources (grouped)",
+           "the summary");
+    Expect(lm::PathActionLabel(all[3]) == "Set Path" && lm::PathActionLabel(all[0]).empty() && !lm::CanEdit(all[2]) &&
+               lm::CanEdit(all[0]),
+           "a local file's path can be set; a built-in entry cannot be edited");
+
+    const auto unused = lm::CleanupCandidates(state, "all");
+    Expect(unused.size() == 1 && unused[0].resource->id == "e" && lm::CleanupCandidates(state, "nam").empty(),
+           "Remove unused offers the imported entries in its scope");
+}
+
+void TestInputModeChoices()
+{
+    using namespace guitarfx::uiclient::input_mode;
+    InputCapabilities caps;
+    caps.known = true;
+    Expect(Listed(caps).size() == 5 && !UnavailableReason(Mode::DualMono, caps),
+           "standalone, two in and out: all five");
+    Expect(FromSettings(true, 2, false) == Mode::MonoSum && ToSettings(Mode::DualMono).dualMono &&
+               !ToSettings(Mode::DualMono).monoMode,
+           "settings both ways");
+    caps.inputChannels = 1;
+    Expect(UnavailableReason(Mode::Stereo, caps) == std::optional<std::string>("Needs a second input") &&
+               !UnavailableReason(Mode::Mono1, caps) &&
+               UnavailableReason(Mode::DualMono, caps) ==
+                   std::optional<std::string>("Needs two inputs and two outputs"),
+           "one input");
+    caps.effectiveMode = "mono";
+    Expect(FallsBack(Mode::Stereo, caps) && !FallsBack(Mode::Mono1, caps), "Stereo on one input runs mono");
+    Expect(StatusNote(Mode::Stereo, caps) == "The audio device has one input, so the chain runs in mono.",
+           "the one-input note");
+    Expect(Tooltip(Mode::Stereo, caps) == "Input: Stereo. Input 1 left, input 2 right. Running in mono. The audio "
+                                          "device has one input, so the chain runs in mono.",
+           "the trigger's tooltip");
+    caps = {};
+    caps.known = true;
+    caps.hostControlled = true;
+    caps.inputChannels = 1;
+    Expect(Listed(caps).size() == 2 && Displayed(Mode::Mono2, caps) == Mode::Stereo, "a DAW: the track, and dual mono");
+    Expect(Present(Mode::Stereo, caps).name == "Track" &&
+               Present(Mode::Stereo, caps).description == "Mono, as the track is" &&
+               Present(Mode::Stereo, caps).icon == "mono",
+           "a mono track");
+    Expect(UnavailableReason(Mode::DualMono, caps) == std::optional<std::string>("Needs a stereo track"),
+           "dual mono needs a stereo track");
+    caps.inputChannels = 2;
+    caps.effectiveMode = "dualMono";
+    caps.dualMonoShared = 2;
+    Expect(StatusNote(Mode::DualMono, caps) ==
+               "2 hosted plugins hear both inputs: a plugin cannot be doubled up for dual mono.",
+           "shared hosted plugins");
+}
+
+// The effect panel's own picture: only a route the engine hands out is drawn, and Fade reads as
+// the web UI's visualizerBackgroundFade.
+void TestVisualizerBackgroundSettings()
+{
+    namespace vb = guitarfx::uiclient::visualizer_background;
+    Expect(vb::IsStoredUrl("ui-backgrounds/0123456789abcdef.png") &&
+               vb::IsStoredUrl("ui-backgrounds/0123456789abcdef.webp"),
+           "the engine's routes");
+    Expect(!vb::IsStoredUrl("ui-backgrounds/0123456789ABCDEF.png") &&
+               !vb::IsStoredUrl("ui-backgrounds/0123456789abcdef.svg") &&
+               !vb::IsStoredUrl("../ui-backgrounds/0123456789abcdef.png") &&
+               !vb::IsStoredUrl("ui-backgrounds/0123.png") && !vb::IsStoredUrl("ui-backgrounds/0123456789abcdef.png?x"),
+           "nothing else");
+    nlohmann::json settings = nlohmann::json::object();
+    Expect(!vb::Url(settings) && vb::Fade(settings) == vb::kFadeDefault, "none, and the default fade");
+    settings[vb::kImageSetting] = "https://example.com/x.png";
+    Expect(!vb::Url(settings), "a stored value the engine did not give is ignored");
+    settings[vb::kImageSetting] = "ui-backgrounds/fedcba9876543210.jpg";
+    settings[vb::kFadeSetting] = 120;
+    Expect(vb::Url(settings) == std::optional<std::string>("ui-backgrounds/fedcba9876543210.jpg") &&
+               vb::Fade(settings) == vb::kFadeMax,
+           "the route, and the fade held to its most");
+    settings[vb::kFadeSetting] = "42.6";
+    Expect(vb::Fade(settings) == 43, "a number kept as text, rounded");
 }
 
 // The engine applies a global chain edit without echoing it, so the client mirrors it: a switch
@@ -2224,6 +2845,22 @@ void TestRiffMessages()
            "a riff with no takes, used in a song");
     Expect(client.State().demo.riffClips.size() == 1 && client.State().demo.riffClips[0].takeId == "t2",
            "favourites are still demo clips");
+
+    // The web's Storage and drop import.
+    commands.SetRiffLibraryPath("D:/riffs");
+    Expect(!sent.empty() && sent.back().value("type", "") == "setRiffLibraryPath" &&
+               sent.back().value("path", "") == "D:/riffs",
+           "the library's folder is set");
+    commands.ImportRiffWav({'R', 'I', 'F', 'F'}, "take.wav", 400.0, 3, 4);
+    Expect(!sent.empty() && sent.back().value("type", "") == "importRiffWav" &&
+               sent.back().value("data", "") == "UklGRg==" && sent.back().value("fileName", "") == "take.wav" &&
+               sent.back().value("tempoBpm", 0.0) == 300.0 && sent.back().value("timeSigNum", 0) == 3 &&
+               !sent.back().contains("bars"),
+           "an audio file is sent as base64, its bars left to the engine");
+    commands.BrowseRiffImportFile(120.0, 4, 4);
+    Expect(!sent.empty() && sent.back().value("type", "") == "browseRiffImportFile" &&
+               sent.back().value("tempoBpm", 0.0) == 120.0,
+           "or the host is asked for the file");
 
     // Armed with 64 bars, as the web UI arms, so the live waveform's scale matches.
     commands.ArmRiffCapture(120.0, 4, 4, 1, true);
@@ -2381,6 +3018,7 @@ void TestLooperMessages()
 int main()
 {
     TestClientMirrorsTheEngine();
+    TestSecondSceneShowsItsOwnChain();
     TestFactoryPackEffectPresetsApplyInTheEngine();
     TestGraphicEqFactoryProfilesApplyExactly();
     TestFactoryPresetParameterOrder();
@@ -2390,6 +3028,10 @@ int main()
     TestChainDropRules();
     TestFeatureFlagsAndFxMarks();
     TestPresetTrail();
+    TestCompositeEditMode();
+    TestCompositePresetSearch();
+    TestResourceBrowserSlotHints();
+    TestFolderFileRows();
     TestResourceIndex();
     TestAnalysis();
     TestAnalysisPresentation();
@@ -2397,6 +3039,9 @@ int main()
     TestDspDiagnostics();
     TestMetronomeMeters();
     TestUpdateCheckVersions();
+    TestVisualizerBackgroundSettings();
+    TestInputModeChoices();
+    TestLibraryManager();
     TestGlobalChainEditsMirror();
     TestLibraryExportAnswer();
     TestRiffMessages();
@@ -2405,6 +3050,8 @@ int main()
     TestAutomation();
     TestInputLevelling();
     TestNodeArchitectureBadge();
+    TestExposedResourceSlots();
+    TestBlendMix();
     TestPresetBrowse();
     TestParamFormatting();
     TestParamVisibility();

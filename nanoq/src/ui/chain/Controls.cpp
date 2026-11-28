@@ -8,6 +8,7 @@
 
 #include "dsp/EffectGuids.h"
 
+#include "uiclient/InputMode.h"
 #include "uiclient/ParamFormat.h"
 
 #include <cmath>
@@ -75,13 +76,29 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
     const float titleSize = metrics::Readable(9.0f);
     const float headHeight = touch ? 36.0f : 12.0f;
     const float belowHeight = touch ? 36.0f : 16.0f;
-    const auto titleInk = mTheme.DarkOr(el::rgba(201, 209, 225, 200), mTheme.TextSecondary());
+    // .control-stack-label: 9 px bold, spaced .08em, --text-muted outside Dark; a label with a
+    // switch beside it (.toggle-label) is 9 px semibold spaced .5 px, 6 px from its 16 x 10 switch.
+    const auto titleInk = mTheme.DarkOr(el::rgba(201, 209, 225, 200), mTheme.TextMuted());
+    constexpr float kTitleTracking = 0.08f;
+    constexpr float kToggleTitleTracking = 0.055f;
+    // Without touch sizes the stacks are the web UI's (.control-stack, 8 px apart): the label's
+    // 22 px row, the 38 px knob and its value 4 px under it (.knob-control, 54 px), and 2 px under
+    // that the input's mode (14 px); each stack as wide as the web's at its default text.
+    constexpr float kHeadRow = 22.0f, kStackGap = 8.0f, kKnobControl = 54.0f, kBelowGap = 2.0f, kBelowRow = 14.0f;
+    const auto widthOf = [cellWidth](float web) { return cellWidth > 0.0f ? cellWidth : web; };
+    // The small pills of the bar's flyouts and the output's mute (18 x 16).
+    auto pill = [this](const char* icon, float iconSize) {
+        auto b = std::make_shared<IconButton>(mTheme, mIcons, icon, IconButton::Look::Pill);
+        b->Size(18, 16).IconSize(iconSize).TouchTarget(36);
+        return b;
+    };
 
     // A cell of the strip: its label (with a switch beside it for a stage that turns off) over a
     // knob and its value, and, for the input, its mode under that.
-    auto knobCell = [&](const char* label, const EffectParamInfo& info, Read read, Write write, Format format,
-                        std::function<bool()> readOn = {}, std::function<void(bool)> writeOn = {},
-                        Ptr below = nullptr) -> Ptr {
+    auto knobCell = [&](const char* label, float webWidth, const EffectParamInfo& info, Read read, Write write,
+                        Format format, std::function<bool()> readOn = {}, std::function<void(bool)> writeOn = {},
+                        Ptr below = nullptr, Ptr besideValue = nullptr) -> Ptr {
+        const float width = widthOf(webWidth);
         auto knob = std::make_shared<ParamKnob>(mTheme, "");
         knob->AccessName(info.name);
         knob->onChange = [info, write, format, k = knob.get()](double position) {
@@ -112,8 +129,8 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
         });
 
         auto title = std::make_shared<Text>(mTheme, label, titleSize, Weight::SemiBold);
-        title->Colour(titleInk).Fixed(true);
-        std::vector<Ptr> head{Stretch(), title};
+        title->Colour(titleInk).Tracking(readOn ? kToggleTitleTracking : kTitleTracking).Fixed(true);
+        std::vector<Ptr> head{Stretch(), touch ? Ptr(title) : Middle(title)};
 
         if (readOn)
         {
@@ -121,6 +138,8 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
             toggle->AccessName(std::string(label) + " on");
             toggle->onClick = [readOn, writeOn] { writeOn(!readOn()); };
             mLive.Bind(toggle, readOn, &MiniSwitch::Set);
+            // The stage's knob greys while it is off, as the web's.
+            mLive.Bind(knob, readOn, [](ParamKnob& k, bool on) { k.Dimmed(!on); });
 
             if (touch)
             {
@@ -129,8 +148,9 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
             }
             else
             {
-                head.push_back(HGap(5));
-                head.push_back(toggle);
+                toggle->Size(16, 10);
+                head.push_back(HGap(6));
+                head.push_back(Middle(toggle));
             }
         }
 
@@ -139,12 +159,48 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
             head.push_back(Stretch());
         }
 
+        if (!touch)
+        {
+            // The web UI's stack: the label row, the knob 8 px under it, and the input's mode.
+            knob->ControlBar(true).CellWidth(width);
+            Ptr top = Col({FixedHeight(kHeadRow, Row(head)), VGap(kStackGap),
+                           FixedHeight(kKnobControl, Row({Stretch(), knob, Stretch()}))});
+
+            // A flyout's chevron beside the value, the two centred as one (.knob-value-row).
+            if (besideValue)
+            {
+                knob->ValueInset(20.0f);
+                top = Over(Col({VGap(kHeadRow + kStackGap + kKnobControl - 12.0f),
+                                FixedHeight(14, Row({Stretch(), std::move(besideValue)})),
+                                std::make_shared<el::element>()}),
+                           top);
+            }
+
+            std::vector<Ptr> cell{FixedHeight(kHeadRow + kStackGap + kKnobControl + kBelowGap, top)};
+
+            if (below)
+            {
+                cell.push_back(FixedHeight(kBelowRow, Row({Stretch(), below, Stretch()})));
+            }
+
+            cell.push_back(std::make_shared<el::element>());
+            return FixedWidth(width, Col(cell));
+        }
+
         // The knob draws no name of its own: the label row sits over the space it leaves (and
         // with touch sizes over a gap above it too).
         const float knobTop = headHeight - 12.0f;
         Ptr knobRow = Row({Stretch(), knob, Stretch()});
         auto top = Over(Col({FixedHeight(headHeight, Row(head)), std::make_shared<el::element>()}),
                         touch ? Col({VGap(knobTop), knobRow}) : knobRow);
+
+        // A flyout's chevron beside the value, as the gate's (.gate-settings-trigger).
+        if (besideValue)
+        {
+            top = Over(Col({Stretch(), FixedHeight(16, Row({Stretch(), std::move(besideValue), HGap(3)})), VGap(4)}),
+                       top);
+        }
+
         std::vector<Ptr> cell{FixedHeight(67 + knobTop, top)};
 
         if (below)
@@ -154,90 +210,121 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
         }
 
         cell.push_back(std::make_shared<el::element>());
-        return FixedWidth(cellWidth, Col(cell));
+        return FixedWidth(width, Col(cell));
     };
 
     // ── IN: the level, and which inputs feed it ──
-    auto inputModeLabel = [chain, this] {
+    // As the web UI's input mode control (inputMode.ts, uiclient's InputMode.h): the trigger names
+    // the mode, in the warning colour when what runs is not what was chosen, and says why under
+    // the pointer.
+    namespace im = guitarfx::uiclient::input_mode;
+    auto currentMode = [chain] {
         const auto& c = chain();
+        return im::FromSettings(c.monoMode, c.inputChannel, c.dualMono);
+    };
 
-        if (c.dualMono)
-        {
-            return std::string("Dual mono");
-        }
+    struct ModeLook
+    {
+        std::string label;
+        std::string tooltip;
+        bool fallback = false;
 
-        if (!c.monoMode)
-        {
-            return std::string(mState.environment.standalone ? "Stereo" : "Track");
-        }
+        bool operator==(const ModeLook&) const = default;
+    };
 
-        return std::string(c.inputChannel == 1 ? "Mono In 2" : c.inputChannel == 2 ? "Mono 1+2" : "Mono In 1");
+    auto modeLook = [this, currentMode] {
+        const auto& caps = mState.inputCapabilities;
+        const auto current = currentMode();
+        const auto shown = im::Displayed(current, caps);
+        return ModeLook{im::Present(shown, caps).name, im::Tooltip(current, caps), im::FallsBack(shown, caps)};
     };
     auto mode = std::make_shared<IconButton>(mTheme, mIcons, "");
-    mode->Size(70, 16).Label(inputModeLabel(), 10.0f).Caret(true).Ink(mTheme.TextSecondary());
-    mode->onClick = [this, chain, m = mode.get()] {
-        auto set = [this](bool mono, int channel, bool dual) {
-            return [this, mono, channel, dual] { mSession.Commands().SetInputMode(mono, channel, dual); };
-        };
+    // .input-mode-trigger: as wide as the IN stack, 14 px tall.
+    mode->Size(touch || cellWidth > 0.0f ? 70.0f : 67.0f, touch ? 16.0f : 14.0f)
+        .Label(modeLook().label, 10.0f)
+        .Caret(true)
+        .LabelPadding(touch ? 20.0f : 8.0f)
+        .Ink(mTheme.TextSecondary());
+    mode->onClick = [this, chain, currentMode, m = mode.get()] {
         const auto& c = chain();
-        // As the web UI's input mode flyout (inputMode.ts): each mode with its routing icon, its
-        // name and what it does.
-        const auto mode = [](std::string name, std::string description, std::string icon, bool chosen,
-                             std::function<void()> choose) {
-            MenuItem item{std::move(name), chosen, false, std::move(choose)};
-            item.icon = std::move(icon);
-            item.subtitle = std::move(description);
-            return item;
-        };
-        std::vector<MenuItem> items{{"Input mode", false, true, {}}};
+        const auto& caps = mState.inputCapabilities;
+        const auto shown = im::Displayed(currentMode(), caps);
+        MenuItem title{"Input mode", false, true, {}};
+
+        // Said only when it is not what the ticked mode would run: Stereo on a one-input device.
+        if (im::FallsBack(shown, caps))
+        {
+            title.detail = "Running " + Lower(im::EffectiveName(caps));
+        }
+
+        std::vector<MenuItem> items{std::move(title)};
 
         // In the standalone app the player picks mono (input 1, input 2 or both summed), stereo or
-        // dual mono; in a DAW the track decides mono or stereo, and dual mono is the one choice left.
-        if (mState.environment.standalone)
+        // dual mono; in a DAW the track decides mono or stereo, and dual mono is the one choice
+        // left. A mode the input or output cannot carry is greyed, with what it needs.
+        for (const auto listed : im::Listed(caps))
         {
-            const bool mono = c.monoMode && !c.dualMono;
-            items.push_back(mode("Mono In 1", "Input 1 on both sides", "input-mono1", mono && c.inputChannel == 0,
-                                 set(true, 0, false)));
-            items.push_back(mode("Mono In 2", "Input 2 on both sides", "input-mono2", mono && c.inputChannel == 1,
-                                 set(true, 1, false)));
-            items.push_back(mode("Mono 1+2", "Inputs 1 and 2 summed", "input-monoSum", mono && c.inputChannel == 2,
-                                 set(true, 2, false)));
-            items.push_back(mode("Stereo", "Input 1 left, input 2 right", "input-stereo", !c.monoMode && !c.dualMono,
-                                 set(false, c.inputChannel, false)));
-        }
-        else
-        {
-            items.push_back(
-                mode("Track", "As the track is", "input-stereo", !c.dualMono, set(c.monoMode, c.inputChannel, false)));
+            const auto look = im::Present(listed, caps);
+            const auto reason = im::UnavailableReason(listed, caps);
+            auto settings = im::ToSettings(listed);
+
+            // In a DAW, the track keeps the mono choice it had.
+            if (caps.hostControlled && listed == im::Mode::Stereo)
+            {
+                settings = {c.monoMode, c.inputChannel, false};
+            }
+
+            MenuItem item{look.name, listed == shown, false, [this, settings] {
+                              mSession.Commands().SetInputMode(settings.monoMode, settings.inputChannel,
+                                                               settings.dualMono);
+                          }};
+            item.icon = "input-" + look.icon;
+            item.subtitle = reason.value_or(look.description);
+            item.disabled = reason.has_value();
+            items.push_back(std::move(item));
         }
 
-        // Dual mono needs both inputs kept apart, so it turns mono off.
-        items.push_back(mode("Dual mono", "A separate rig per input", "input-dualMono", c.dualMono,
-                             set(false, c.inputChannel, true)));
+        if (const auto note = im::StatusNote(currentMode(), caps); !note.empty())
+        {
+            MenuItem remark{note, false, false, {}};
+            remark.note = true;
+            items.push_back(std::move(remark));
+        }
+
         OpenDropdown(m->Bounds(), std::move(items), 250.0f);
     };
-    mLive.Bind(mode, inputModeLabel, [](IconButton& m, const std::string& label) { m.Label(label, 10.0f); });
+    mLive.Bind(mode, modeLook, [this](IconButton& m, const ModeLook& look) {
+        m.Label(look.label, 10.0f).Ink(look.fallback ? mTheme.Warning() : mTheme.TextSecondary());
+        m.Tooltip(look.tooltip);
+    });
 
     auto in = knobCell(
-        "IN", Param("inputGain", "In", "dB", -12.0, 12.0, 0.0), [chain] { return chain().inputGain; },
+        "IN", 67.0f, Param("inputGain", "In", "dB", -12.0, 12.0, 0.0), [chain] { return chain().inputGain; },
         [&commands](double v) { commands.SetGlobalChainParam("input.gain", v); }, Decibels, {}, {}, mode);
 
     // ── GATE ──
     // ── GATE: Threshold and on/off here; everything else, and Learn, behind Settings ──
-    auto gateSettings = std::make_shared<IconButton>(mTheme, mIcons, "");
-    gateSettings->Size(70, 16).Label("Settings", 10.0f).Caret(true).Ink(mTheme.TextSecondary());
+    auto gateSettings = pill("ui-chevron-down", 9.0f);
+    gateSettings->AccessName("Noise gate settings");
+
+    // .gate-settings-trigger: 16 x 14 beside the value.
+    if (!touch)
+    {
+        gateSettings->Size(16, 14);
+    }
+
     gateSettings->onClick = [this, g = gateSettings.get()] { OpenGlobalGate(g->Bounds()); };
     auto gate = knobCell(
-        "GATE", Param("threshold", "Gate", "dB", -90.0, 0.0, -60.0, 1.0),
+        "GATE", 57.0f, Param("threshold", "Gate", "dB", -90.0, 0.0, -60.0, 1.0),
         [chain] { return NodeParam(chain().preChainGraph, "global_gate", "threshold", -60.0); },
         [&commands](double v) { commands.SetGlobalChainParam("gate.threshold", v); },
         [](double v) { return std::to_string(static_cast<int>(std::lround(v))) + " dB"; },
         [chain] { return NodeEnabled(chain().preChainGraph, "global_gate"); },
-        [&commands](bool on) { commands.SetGlobalChainToggle("gate.enabled", on); }, gateSettings);
+        [&commands](bool on) { commands.SetGlobalChainToggle("gate.enabled", on); }, nullptr, gateSettings);
 
     // ── TRANSPOSE: as the web UI's knob, the transpose runs only while it transposes ──
     auto transpose = knobCell(
-        "TRANSPOSE", Param("semitones", "Transpose", " st", -12.0, 12.0, 0.0, 1.0),
+        "TRANSPOSE", 62.0f, Param("semitones", "Transpose", " st", -12.0, 12.0, 0.0, 1.0),
         [chain] {
             return NodeEnabled(chain().preChainGraph, "global_transpose")
                        ? NodeParam(chain().preChainGraph, "global_transpose", "semitones", 0.0)
@@ -254,8 +341,9 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
         });
 
     // ── EQ: its switch, and a button that opens its four bands ──
-    auto eqButton = std::make_shared<IconButton>(mTheme, mIcons, "sliders", IconButton::Look::Boxed);
-    eqButton->Size(46, 46).IconSize(18).Ink(mTheme.TextSecondary());
+    // .eq-icon-btn: 48 x 48 with the web UI's bars, glowing in the accent while the EQ is on.
+    auto eqButton = std::make_shared<IconButton>(mTheme, mIcons, "ui-eq-bars", IconButton::Look::Well);
+    eqButton->Size(48, 48).IconSize(18).AccessName("Global EQ");
     eqButton->onClick = [this] { OpenGlobalEq(); };
     // Lit in the accent while the Global EQ is on, as the web UI's .eq-icon-btn.
     mLive.Bind(
@@ -268,22 +356,28 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
     };
     mLive.Bind(eqOn, [chain] { return NodeEnabled(chain().postChainGraph, "global_eq"); }, &MiniSwitch::Set);
     auto eqTitle = std::make_shared<Text>(mTheme, "EQ", titleSize, Weight::SemiBold);
-    eqTitle->Colour(titleInk).Fixed(true);
-    Ptr eqHead = Row({Stretch(), eqTitle, HGap(5), eqOn, Stretch()});
+    eqTitle->Colour(titleInk).Tracking(kToggleTitleTracking).Fixed(true);
+    Ptr eqHead;
 
     if (touch)
     {
         eqOn->Title("EQ", titleSize, titleInk);
         eqHead = Row({eqOn});
     }
+    else
+    {
+        eqOn->Size(16, 10);
+        eqHead = Row({Stretch(), Middle(eqTitle), HGap(6), Middle(eqOn), Stretch()});
+    }
 
-    auto eq =
-        FixedWidth(72, Col({FixedHeight(headHeight, eqHead), VGap(touch ? 4 : 8),
-                            FixedHeight(46, Row({Stretch(), eqButton, Stretch()})), std::make_shared<el::element>()}));
+    // The EQ's stack: its label row, and the button where the other stacks have their knobs.
+    auto eq = FixedWidth(cellWidth > 0.0f ? 72.0f : 48.0f,
+                         Col({FixedHeight(touch ? headHeight : kHeadRow, eqHead), VGap(touch ? 4.0f : kStackGap),
+                              FixedHeight(48, Row({Stretch(), eqButton, Stretch()})), std::make_shared<el::element>()}));
 
     // ── DOUBLER ──
     auto doubler = knobCell(
-        "DOUBLER", Param("time", "Doubler", "ms", 0.5, 50.0, 6.0),
+        "DOUBLER", 68.0f, Param("time", "Doubler", "ms", 0.5, 50.0, 6.0),
         [chain] { return NodeParam(chain().postChainGraph, "global_doubler", "time", 6.0); },
         [&commands](double v) { commands.SetGlobalChainParam("doubler.delay", v); },
         [](double v) {
@@ -294,29 +388,32 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
         [chain] { return NodeEnabled(chain().postChainGraph, "global_doubler"); },
         [&commands](bool on) { commands.SetGlobalChainToggle("doubler.enabled", on); });
 
-    // ── OUT, with mute under its meter, and the output's status readout behind Status ──
-    auto outStatus = std::make_shared<IconButton>(mTheme, mIcons, "");
-    outStatus->Size(70, 16).Label("Status", 10.0f).Caret(true).Ink(mTheme.TextSecondary());
+    // ── OUT; its mute and the output's status chevron sit under its meter (.output-vu-meter) ──
+    auto outStatus = pill("ui-chevron-down", 9.0f);
+    outStatus->AccessName("Output DSP status");
     outStatus->onClick = [this, o = outStatus.get()] { OpenOutputStatus(o->Bounds()); };
     auto out = knobCell(
-        "OUT", Param("outputGain", "Out", "dB", -12.0, 12.0, 0.0), [chain] { return chain().outputGain; },
-        [&commands](double v) { commands.SetGlobalChainParam("output.gain", v); }, Decibels, {}, {}, outStatus);
+        "OUT", 46.0f, Param("outputGain", "Out", "dB", -12.0, 12.0, 0.0), [chain] { return chain().outputGain; },
+        [&commands](double v) { commands.SetGlobalChainParam("output.gain", v); }, Decibels);
 
     // The meters, from the telemetry feed (20 Hz): only a bar that moved is redrawn.
     auto inMeter = std::make_shared<MeterBar>(mTheme);
-    inMeter->Vertical(true);
+    inMeter->Vertical(true).Name("Input level");
     mLive.Feed(inMeter, [this](MeterBar& m) {
         return m.Set(mState.telemetry.input.peakDb, mState.telemetry.input.clipped, mState.telemetry.input.rmsDb);
     });
     auto outMeter = std::make_shared<MeterBar>(mTheme);
-    outMeter->Vertical(true);
+    outMeter->Vertical(true).Name("Output level");
     mLive.Feed(outMeter, [this](MeterBar& m) {
         return m.Set(mState.telemetry.output.peakDb, mState.telemetry.output.clipped, mState.telemetry.output.rmsDb);
     });
-    auto mute = std::make_shared<IconButton>(mTheme, mIcons, mState.outputMuted ? "ui-mute" : "ui-speaker");
-    mute->Size(20, 18).IconSize(12).TouchTarget(36);
+    // .output-quick-mute-btn: coral while muted, with the wave struck through.
+    auto mute = pill(mState.outputMuted ? "ui-out-muted" : "ui-out-speaker", 11.0f);
+    mute->LitColour(el::rgba(240, 138, 101, 255)).AccessName("Mute output");
     mute->onClick = [this] { mSession.Commands().SetOutputMuted(!mState.outputMuted); };
-    mLive.Bind(mute, [this] { return mState.outputMuted; }, &IconButton::Lit);
+    mLive.Bind(
+        mute, [this] { return mState.outputMuted; },
+        [](IconButton& b, bool muted) { b.Lit(muted).Icon(muted ? "ui-out-muted" : "ui-out-speaker"); });
 
     ControlCells cells;
     cells.in = in;
@@ -327,7 +424,19 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
     cells.out = out;
     cells.inMeter = inMeter;
     cells.outMeter = outMeter;
-    cells.mute = mute;
+    // Under the output meter the mute (18 x 14) and 2 px under it the status chevron (18 x 10),
+    // as the web UI's .output-vu-meter; side by side with touch sizes.
+    if (touch)
+    {
+        cells.mute = Tight({mute, HGap(3), outStatus});
+    }
+    else
+    {
+        mute->Size(18, 14);
+        outStatus->Size(18, 10);
+        cells.mute = FixedWidth(18, Col({FixedHeight(14, mute), VGap(2), FixedHeight(10, outStatus)}));
+    }
+
     cells.levelling = BuildInputLevellingButton();
     return cells;
 }
@@ -335,28 +444,32 @@ Shell::ControlCells Shell::BuildControlCells(float cellWidth)
 void Shell::OpenControls()
 {
     // Touch sizes: the chevron and mute under the meters take 36 px rows, as the cells' do.
-    const float under = metrics::Touch() ? 36.0f : 18.0f;
+    const float under = metrics::Touch() ? 36.0f : 26.0f;
     // and the gaps beside the meters close up, so the strip is no wider than without them.
     const float meterGap = metrics::Touch() ? 8.0f : 14.0f;
     // The five knob cells narrow (down to their 70 px drop-downs) where the strip would run past
     // the window: at 640 wide it needed 28 px more than the popover has. The EQ cell is 72, a meter
     // column about 30 (36 with touch sizes), and the popover's sides 6 and its padding 8 each.
     const auto view = ViewSize();
-    const float room = view.x - metrics::kRailWidth - 12.0f - 16.0f;
-    const float fixed = 72.0f + 2.0f * meterGap + 2.0f * (metrics::Touch() ? 36.0f : 30.0f) + 2.0f;
+    // Under the stacked frame's tab bar; the rail's preset bar is at the top.
+    const float top = mStack ? metrics::kStackTabBarHeight : 0.0f;
+    const float room = view.x - StageLeft() - 12.0f - 16.0f;
+    const float fixed = 72.0f + 2.0f * meterGap + 2.0f * std::max(metrics::Touch() ? 36.0f : 0.0f, MeterBar::ColumnWidth(mTheme)) + 2.0f;
     auto c = BuildControlCells(std::clamp(std::floor((room - fixed) / 5.0f), 72.0f, 84.0f));
     auto strip =
         Row({Stretch(),
-             Col({FixedHeight(84, c.inMeter), VGap(2), FixedHeight(under, Row({Stretch(), c.levelling, Stretch()})),
+             Col({FixedHeight(MeterBar::ColumnHeight(mTheme), c.inMeter), VGap(4),
+                  FixedHeight(under, Row({Stretch(), c.levelling, Stretch()})),
                   std::make_shared<el::element>()}),
              HGap(meterGap), c.in, c.gate, c.transpose, Stretch(), c.eq, c.doubler, c.out, HGap(meterGap),
-             Col({FixedHeight(84, c.outMeter), VGap(2), FixedHeight(under, Row({Stretch(), c.mute, Stretch()})),
+             Col({FixedHeight(MeterBar::ColumnHeight(mTheme), c.outMeter), VGap(4),
+                  FixedHeight(under, Row({Stretch(), c.mute, Stretch()})),
                   std::make_shared<el::element>()}),
              Stretch()});
 
     ShowPopover(Pad(8, 10, 8, 6, strip),
-                el::rect{metrics::kRailWidth + 6.0f, 0.0f, view.x - 6.0f, metrics::TopBarHeight() - 6.0f},
-                view.x - metrics::kRailWidth - 12.0f, 124.0f + (metrics::Touch() ? metrics::kTouchCellExtra : 0.0f));
+                el::rect{StageLeft() + 6.0f, top, view.x - 6.0f, top + metrics::TopBarHeight() - 6.0f},
+                view.x - StageLeft() - 12.0f, 124.0f + (metrics::Touch() ? metrics::kTouchCellExtra : 0.0f));
     // The bar's CONTROLS stays lit while the strip is out, as the web UI's tab does.
     mControlsOpen = true;
     mOnOverlayClosed = [this] { mControlsOpen = false; };

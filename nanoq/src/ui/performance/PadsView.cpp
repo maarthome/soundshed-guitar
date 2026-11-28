@@ -294,6 +294,8 @@ class BankCurrent final : public el::element, public Drawn
     }
 
     std::function<void()> onEdit;
+    /// A right click anywhere on it: the bank select MIDI Learn menu, at the click.
+    std::function<void(el::point)> onMenu;
 
     el::view_limits limits(const el::basic_context&) const override
     {
@@ -336,6 +338,16 @@ class BankCurrent final : public el::element, public Drawn
 
     bool click(const el::context& ctx, el::mouse_button btn) override
     {
+        if (btn.state == el::mouse_button::right && onMenu)
+        {
+            if (btn.down)
+            {
+                onMenu(btn.pos);
+            }
+
+            return true;
+        }
+
         if (!mEditable || btn.state != el::mouse_button::left || !EditRect(ctx.bounds).includes(btn.pos))
         {
             return false;
@@ -471,6 +483,14 @@ Ptr Shell::BuildPadsView()
         auto b = std::make_shared<BankStep>(
             mTheme, up, can ? mState.setlists[static_cast<std::size_t>(to)].name : std::string(end));
         b->Enabled(can);
+        // Learnable at either end too: a footswitch steps whichever setlist is next.
+        b->onMenu = [this, up](el::point at) {
+            if (const auto target = guitarfx::uiclient::RegistryLearnTarget(mState.automation,
+                                                                            up ? "setlist.bankUp" : "setlist.bankDown"))
+            {
+                OpenMidiLearnMenu(*target, at);
+            }
+        };
 
         if (can)
         {
@@ -501,7 +521,17 @@ Ptr Shell::BuildPadsView()
         auto saveEdit = std::make_shared<Button>(
             mTheme, "Save",
             [this, id, bank] {
-                const auto name = mPadsNameBox ? mPadsNameBox->get_utf8() : std::string();
+                auto name = mPadsNameBox ? mPadsNameBox->get_utf8() : std::string();
+                const auto first = name.find_first_not_of(" 	");
+
+                // A blank name is refused and the editor stays open (updateActiveSetlistDetails).
+                if (first == std::string::npos)
+                {
+                    ShowToast("Setlist name required", "Enter a setlist name.", true);
+                    return;
+                }
+
+                name = name.substr(first, name.find_last_not_of(" 	") - first + 1);
                 // The bank keeps its number; one without takes the next free (saveEditedSetlist).
                 std::vector<Setlist> others;
 
@@ -574,17 +604,29 @@ Ptr Shell::BuildPadsView()
                                                 "Create a bank to start assigning paths.", false);
     }
 
+    // Bank select: a controller's value picks the setlist by number.
+    if (auto* bank = dynamic_cast<BankCurrent*>(current.get()))
+    {
+        bank->onMenu = [this](el::point at) {
+            if (const auto target = guitarfx::uiclient::RegistryLearnTarget(mState.automation, "setlist.bankSelect"))
+            {
+                OpenMidiLearnMenu(*target, at);
+            }
+        };
+    }
+
     auto strip = Row({step(activeIndex - 1, false, "First"), HGap(11), Stretch(current, 1.0), HGap(11),
                       step(activeIndex < 0 ? -1 : activeIndex + 1, true, "Last")});
 
-    // ── The pads (.performance-pad-grid): two rows of four, three or two; two across when narrow ──
+    // ── The pads (.performance-pad-grid): two rows of four, three or two; six or eight go two
+    // across in a window 920 wide or less and one across at 560 or less, as the web's media
+    // queries (on the window, the web view's viewport) ──
     Ptr pads;
 
     if (setlist != nullptr)
     {
-        // From the stage, not the window: the rail and the full layout's header take their share.
-        const bool narrow = StageWidth() < 640.0f;
-        const int columns = padCount == 4 ? 2 : narrow ? 2 : padCount / 2;
+        const float window = ViewSize().x;
+        const int columns = padCount == 4 ? 2 : window <= 560.0f ? 1 : window <= 920.0f ? 2 : padCount / 2;
         const int cursor = mState.setlistCursor;
         const std::string id = setlist->id;
         std::vector<Ptr> rows;
@@ -611,7 +653,7 @@ Ptr Shell::BuildPadsView()
                 }
 
                 pad->onAssign = [this, index] { AssignSetlistPad(index); };
-                pad->onMenu = [this, id, index, presetId](el::point) {
+                pad->onMenu = [this, id, index, presetId](el::point at) {
                     std::vector<MenuItem> items;
 
                     if (!mState.activePresetId.empty())
@@ -625,6 +667,18 @@ Ptr Shell::BuildPadsView()
                         items.push_back({"Clear this pad", false, false, [this, index] { ClearSetlistPad(index); }});
                     }
 
+                    // Pad N calls up the setlist's Nth preset, whichever setlist is active.
+                    if (guitarfx::uiclient::SetlistPadLearnTarget(mState.automation, index))
+                    {
+                        items.push_back({"MIDI Learn\xE2\x80\xA6", false, false, [this, index, at] {
+                                             if (const auto target = guitarfx::uiclient::SetlistPadLearnTarget(
+                                                     mState.automation, index))
+                                             {
+                                                 OpenMidiLearnMenu(*target, at);
+                                             }
+                                         }});
+                    }
+
                     if (!items.empty())
                     {
                         OpenMenu("Pad " + std::to_string(index + 1), std::move(items));
@@ -636,7 +690,11 @@ Ptr Shell::BuildPadsView()
                     cells.push_back(HGap(11));
                 }
 
-                cells.push_back(pad);
+                // A preset dragged here goes on this pad (setlistPadDrop.ts).
+                DropSpot spot;
+                spot.kind = DropSpot::Kind::Pad;
+                spot.index = index;
+                cells.push_back(DropTarget(std::move(spot), pad));
             }
 
             if (!rows.empty())
@@ -651,7 +709,8 @@ Ptr Shell::BuildPadsView()
     }
     else
     {
-        pads = EmptyState("No setlist selected", "Add a bank, or make a setlist in the preset chooser.");
+        pads = EmptyState("No setlist selected",
+                          "Create a setlist in the preset library, then return here for live path selection.");
     }
 
     // A short stage tightens the spacing and the bank strip, as the web UI's max-height: 760px
@@ -661,22 +720,18 @@ Ptr Shell::BuildPadsView()
     const float edge = short_ ? 12.0f : 16.0f;
     std::vector<Ptr> column{FixedHeight(32, Row(header)), VGap(gap)};
 
-    // With no setlist the bank strip has nothing to step through, and the page says so once,
-    // under the header.
-    if (setlist != nullptr || editing)
-    {
-        column.push_back(FixedHeight(editing ? 136.0f : (short_ ? 72.0f : 95.0f), strip));
-        column.push_back(VGap(gap));
-    }
+    // The bank strip shows with no setlist too ("No bank", "No setlist selected"), as the web's.
+    column.push_back(FixedHeight(editing ? 136.0f : (short_ ? 72.0f : 95.0f), strip));
+    column.push_back(VGap(gap));
 
     column.push_back(pads);
     return Dressed(mTheme, mTheme.Background(), &Backdrops::main, Pad(18, edge, 18, edge, Col(column)));
 }
 
-void Shell::AssignSetlistPad(int index)
+void Shell::AssignSetlistPad(int index, const std::string& dropped)
 {
     const Setlist* setlist = ActiveSetlist(mState);
-    const std::string presetId = mState.activePresetId;
+    const std::string presetId = dropped.empty() ? mState.activePresetId : dropped;
 
     if (setlist == nullptr || presetId.empty())
     {
@@ -694,13 +749,14 @@ void Shell::AssignSetlistPad(int index)
 
     if (existing == presetId)
     {
-        ShowToast("Path unchanged", "Pad " + std::to_string(index + 1) + " already plays " + nameOf(presetId) + ".",
+        ShowToast("Path unchanged", "Pad " + std::to_string(index + 1) + " already uses " + nameOf(presetId) + ".",
                   false);
         return;
     }
 
-    const auto assign = [this, id = setlist->id, index, presetId] {
+    const auto assign = [this, id = setlist->id, index, presetId, name = nameOf(presetId)] {
         mSession.Commands().SetSetlistSlot(id, index, presetId);
+        ShowToast("Path saved", "Pad " + std::to_string(index + 1) + ": " + name, false);
     };
 
     if (existing.empty())

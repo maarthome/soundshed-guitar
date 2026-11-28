@@ -57,11 +57,11 @@ Name: "clap"; Description: "CLAP plugin"; Types: custom; Flags: checkablealone
 Name: "aax"; Description: "AAX plugin for Pro Tools"; Types: full custom; Flags: checkablealone
 #endif
 
-; Advanced choices, off unless ticked (or passed: /TASKS="nativeuionly" or "skipwebview2" for a
-; silent install). Inno remembers them for the next install over this one.
+; Advanced choice, off unless ticked (or passed: /TASKS="nativeuionly" for a silent install). Inno
+; remembers it for the next install over this one. Ticked, the WebView2 runtime is not installed:
+; the native UI draws without a browser.
 [Tasks]
-Name: "nativeuionly"; Description: "Use only the native (Nano) UI, with no WebView2 (experimental)"; GroupDescription: "Advanced:"; Flags: unchecked
-Name: "skipwebview2"; Description: "Don't install the Microsoft Edge WebView2 runtime"; GroupDescription: "Advanced:"; Flags: unchecked
+Name: "nativeuionly"; Description: "Use only the native (Nano) UI (beta). WebView2 is not installed."; GroupDescription: "Advanced:"; Flags: unchecked
 
 [Setup]
 #if TargetArch == "Win32"
@@ -119,7 +119,7 @@ Root: HKA; Subkey: "Software\{#Publisher}\{#ProductName}\Installer"; ValueType: 
 Source: "{#ArtefactsDir}\VST3\{#ProductName}.vst3\*"; DestDir: "{code:GetVst3Dir}"; Excludes: *.ilk,resources\*,*\resources\*; Flags: ignoreversion recursesubdirs; Components: vst3
 Source: "{#ArtefactsDir}\CLAP\{#ProductName}.clap"; DestDir: "{code:GetClapDir}"; Flags: ignoreversion; Components: clap
 Source: "{#ArtefactsDir}\Standalone\*"; DestDir: "{code:GetStandaloneDir}"; Excludes: *.ilk,resources\*,*\resources\*; Flags: ignoreversion recursesubdirs; Components: standalone
-; The experimental native UI's fonts (juce/cmake/NanoQUi.cmake; skipifsourcedoesntexist for a
+; The native (beta) UI's fonts (juce/cmake/NanoQUi.cmake; skipifsourcedoesntexist for a
 ; build without it). Elements finds them only beside the binary that draws: resources\ next to the
 ; exe or the VST3's library, and "<name> Resources" next to the CLAP, which keeps them out of the
 ; resources folder every vendor's CLAP shares.
@@ -162,6 +162,8 @@ const
 
 var
     InstallPathsPage: TInputDirWizardPage;
+    // Set when the user answers No to installing the WebView2 runtime (asked on the Ready page).
+    WebView2Declined: Boolean;
 
 function TrimmedPath(const Path: string): string;
 begin
@@ -264,9 +266,57 @@ begin
         Result := True;
 end;
 
+function HasWebView2Version(const RootKey: Integer): Boolean;
+var
+    Version: string;
+begin
+    // An uninstalled runtime can leave its key behind with pv = 0.0.0.0.
+    Result := RegQueryStringValue(RootKey, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version)
+        and (Version <> '') and (Version <> '0.0.0.0');
+end;
+
+function IsWebView2RuntimeInstalled: Boolean;
+begin
+    // A per-machine runtime registers in the 32-bit view (WOW6432Node) on 64-bit Windows. In 64-bit
+    // install mode HKLM is the 64-bit view, so HKLM32 has to be read explicitly: without it every
+    // x64/ARM64 install missed the runtime and downloaded and re-ran its installer after copying files.
+    Result := HasWebView2Version(HKLM32)
+        or (IsWin64 and HasWebView2Version(HKLM64))
+        or HasWebView2Version(HKCU);
+end;
+
+function NeedsWebView2Runtime: Boolean;
+begin
+    // Not wanted when only the native UI is used: it draws without a browser.
+    Result := not IsWebView2RuntimeInstalled
+        and not WizardIsTaskSelected('nativeuionly');
+end;
+
+// Asked before anything is installed, and only when the runtime is missing. A silent install takes
+// the default (Yes); /TASKS="nativeuionly" leaves it out there.
+procedure ConfirmWebView2Install;
+begin
+    WebView2Declined := False;
+
+    if not WizardIsComponentSelected('standalone') or not NeedsWebView2Runtime then
+        Exit;
+
+    WebView2Declined := SuppressibleMsgBox(
+        'The Microsoft Edge WebView2 runtime is not installed. {#ProductName} uses it to show its main interface.' + #13#10#13#10 +
+        'Download and install it from Microsoft now? This needs an internet connection and can take a few minutes.' + #13#10#13#10 +
+        'If you choose No, {#ProductName} uses its native interface until WebView2 is installed.',
+        mbConfirmation, MB_YESNO, IDYES) <> IDYES;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
     Result := True;
+
+    if CurPageID = wpReady then
+    begin
+        ConfirmWebView2Install;
+        Exit;
+    end;
 
     if CurPageID = wpSelectComponents then
     begin
@@ -319,27 +369,6 @@ begin
 #endif
 end;
 
-function IsWebView2RuntimeInstalled: Boolean;
-var
-    Version: string;
-begin
-    Result :=
-        (RegQueryStringValue(HKLM64, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> ''))
-        or
-        (RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> ''))
-        or
-        (RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> ''));
-end;
-
-function NeedsWebView2Runtime: Boolean;
-begin
-    // Not wanted when the advanced choices leave it out: only the native UI, which draws without
-    // a browser, or the user installs (or deploys) the runtime themselves.
-    Result := not IsWebView2RuntimeInstalled
-        and not WizardIsTaskSelected('nativeuionly')
-        and not WizardIsTaskSelected('skipwebview2');
-end;
-
 function InstallWebView2Runtime: Boolean;
 var
     InstallerPath: string;
@@ -348,8 +377,12 @@ var
 begin
     Result := True;
 
-    if not NeedsWebView2Runtime then
+    if WebView2Declined or not NeedsWebView2Runtime then
         Exit;
+
+    // The download and install below can take a minute or more with no file progress to show.
+    WizardForm.StatusLabel.Caption := 'Installing the Microsoft Edge WebView2 runtime...';
+    WizardForm.ProgressGauge.Style := npbstMarquee;
 
     InstallerPath := ExpandConstant('{tmp}\MicrosoftEdgeWebView2Setup.exe');
     DownloadCommand := '/C powershell -NoProfile -ExecutionPolicy Bypass -Command "' +

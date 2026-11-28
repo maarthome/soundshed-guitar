@@ -30,7 +30,8 @@ Text::Text(const Theme& theme, std::string text, float size, Weight weight)
 el::view_limits Text::limits(const el::basic_context& ctx) const
 {
     const auto font = mWeight == Weight::Title ? TitleFont(mSize) : Font(mWeight).size(mSize);
-    const auto size = el::measure_text(ctx.canvas, mText, font);
+    auto size = el::measure_text(ctx.canvas, mText, font);
+    size.x = mTracking > 0.0f ? TrackedWidth(ctx.canvas, mText, font, mTracking) : size.x;
     const float h = std::max(size.y, mSize * 1.3f);
     return mFixed ? el::view_limits{{size.x, h}, {size.x, h}} : el::view_limits{{0.0f, h}, {el::full_extent, h}};
 }
@@ -39,6 +40,13 @@ void Text::draw(const el::context& ctx)
 {
     NoteDrawn(ctx);
     const auto font = mWeight == Weight::Title ? TitleFont(mSize) : Font(mWeight).size(mSize);
+
+    if (mTracking > 0.0f && TrackedWidth(ctx.canvas, mText, font, mTracking) <= ctx.bounds.width())
+    {
+        FillTrackedText(ctx.canvas, mText, font, mColour, ctx.bounds, mAlign, mTracking);
+        return;
+    }
+
     const auto shown = Ellipsize(ctx.canvas, mText, font, ctx.bounds.width());
     FillText(ctx.canvas, shown, font, mColour, ctx.bounds, mAlign);
 }
@@ -50,39 +58,94 @@ Paragraph::Paragraph(const Theme& theme, std::string text, float width, float si
 
 std::vector<std::string> Paragraph::Lines(cycfi::artist::canvas& cnv) const
 {
-    // As many words as fit each line; a word wider than the line has one to itself.
-    const auto font = Font(Weight::Regular).size(mSize);
+    // As many words as fit each line; a word wider than the line has one to itself. A line
+    // break in the text starts a new line (an empty one for a blank line), as a description's
+    // paragraphs read; the drawing would otherwise break there unmeasured.
+    const auto font = Font(mWeight).size(mSize);
     std::vector<std::string> lines;
-    std::string line;
-    std::size_t i = 0;
+    std::string text = mText;
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    std::size_t from = 0;
 
-    while (i < mText.size())
+    while (from <= text.size())
     {
-        const auto space = mText.find(' ', i);
-        const auto word = mText.substr(i, space == std::string::npos ? std::string::npos : space - i);
-        i = space == std::string::npos ? mText.size() : space + 1;
+        const auto end = std::min(text.find('\n', from), text.size());
+        const auto segment = text.substr(from, end - from);
+        from = end + 1;
+        const auto before = lines.size();
+        std::string line;
+        std::size_t i = 0;
 
-        if (word.empty())
+        while (i < segment.size())
         {
-            continue;
+            const auto space = segment.find(' ', i);
+            const auto word = segment.substr(i, space == std::string::npos ? std::string::npos : space - i);
+            i = space == std::string::npos ? segment.size() : space + 1;
+
+            if (word.empty())
+            {
+                continue;
+            }
+
+            // A word wider than a whole line (a path, an id) is broken where it reaches the edge,
+            // between characters (overflow-wrap: anywhere), never inside one.
+            if (el::measure_text(cnv, word, font).x > mWidth)
+            {
+                if (!line.empty())
+                {
+                    lines.push_back(line);
+                    line.clear();
+                }
+
+                std::string piece;
+
+                for (std::size_t c = 0; c < word.size();)
+                {
+                    std::size_t next = c + 1;
+
+                    while (next < word.size() && (static_cast<unsigned char>(word[next]) & 0xC0) == 0x80)
+                    {
+                        ++next;
+                    }
+
+                    const auto glyph = word.substr(c, next - c);
+
+                    if (!piece.empty() && el::measure_text(cnv, piece + glyph, font).x > mWidth)
+                    {
+                        lines.push_back(piece);
+                        piece.clear();
+                    }
+
+                    piece += glyph;
+                    c = next;
+                }
+
+                line = piece;
+                continue;
+            }
+
+            const auto joined = line.empty() ? word : line + " " + word;
+
+            if (!line.empty() && el::measure_text(cnv, joined, font).x > mWidth)
+            {
+                lines.push_back(line);
+                line = word;
+            }
+            else
+            {
+                line = joined;
+            }
         }
 
-        const auto joined = line.empty() ? word : line + " " + word;
-
-        if (!line.empty() && el::measure_text(cnv, joined, font).x > mWidth)
+        if (!line.empty())
         {
             lines.push_back(line);
-            line = word;
         }
-        else
-        {
-            line = joined;
-        }
-    }
 
-    if (!line.empty())
-    {
-        lines.push_back(line);
+        if (lines.size() == before && end < text.size())
+        {
+            lines.emplace_back(); // a blank line between paragraphs
+        }
     }
 
     return lines;
@@ -94,9 +157,14 @@ el::view_limits Paragraph::limits(const el::basic_context& ctx) const
     return {{mWidth, h}, {mWidth, h}};
 }
 
+float Paragraph::Height() const
+{
+    return static_cast<float>(std::max<std::size_t>(1, Lines(MeasureCanvas()).size())) * (mSize + 5.0f);
+}
+
 void Paragraph::draw(const el::context& ctx)
 {
-    const auto font = Font(Weight::Regular).size(mSize);
+    const auto font = Font(mWeight).size(mSize);
     float y = ctx.bounds.top;
 
     for (const auto& line : Lines(ctx.canvas))
@@ -107,10 +175,40 @@ void Paragraph::draw(const el::context& ctx)
     }
 }
 
+Paragraph& Paragraph::Weighted(Weight weight)
+{
+    mWeight = weight;
+    return *this;
+}
+
 Paragraph& Paragraph::Colour(el::color c)
 {
     mColour = c;
     return *this;
+}
+
+std::optional<AccessInfo> Text::DescribeStatic() const
+{
+    int level = mHeading;
+
+    // A title is a heading of its own; a section's label says so (AccessHeading), as small
+    // capitals also caption knobs and badges.
+    if (level < 0)
+    {
+        level = mWeight == Weight::Title ? 1 : 0;
+    }
+
+    if (level <= 0 || mText.empty())
+    {
+        return std::nullopt;
+    }
+
+    AccessInfo info;
+    info.role = AccessRole::Heading;
+    info.level = level;
+    // Small capitals are drawn from the text as written; a screen reader spells out capitals.
+    info.name = mText;
+    return info;
 }
 
 Text& Text::Set(std::string text)
@@ -134,6 +232,12 @@ Text& Text::Alignment(Align a)
 Text& Text::Fixed(bool fixed)
 {
     mFixed = fixed;
+    return *this;
+}
+
+Text& Text::Tracking(float em)
+{
+    mTracking = std::max(0.0f, em);
     return *this;
 }
 
@@ -292,9 +396,9 @@ bool Button::click(const el::context& ctx, el::mouse_button btn)
     mDown = false;
     ctx.view.refresh(ctx);
 
-    if (wasDown && ctx.bounds.includes(btn.pos) && mOnClick)
+    if (wasDown && ctx.bounds.includes(btn.pos))
     {
-        mOnClick();
+        RunFromCopy(mOnClick); // it may rebuild the row this button is in
     }
 
     return true;
@@ -439,6 +543,24 @@ MeterBar::MeterBar(const Theme& theme) : mTheme(theme)
 {
 }
 
+std::optional<AccessInfo> MeterBar::DescribeStatic() const
+{
+    AccessInfo info;
+    info.role = AccessRole::Meter;
+    info.name = mName.empty() ? std::string("Level") : mName;
+    // Whole decibels: a reader polling it hears a number that holds still long enough to say.
+    const double db = std::round(mPeakDb);
+    info.value = db <= -60.0 ? std::string("silent") : std::to_string(static_cast<int>(db)) + " dB";
+
+    if (mClipped)
+    {
+        info.value += ", clipping";
+    }
+
+    info.position = std::clamp((mPeakDb + 60.0) / 60.0, 0.0, 1.0);
+    return info;
+}
+
 namespace
 {
 // The gauge face's geometry, in its own pixels (66 x 48), from
@@ -491,7 +613,24 @@ bool MeterBar::ThemeGauge(const Theme& theme)
 
 float MeterBar::ColumnWidth(const Theme& theme)
 {
-    return ThemeGauge(theme) ? std::ceil(theme.Controls().gaugeWidth) : 30.0f;
+    return ThemeGauge(theme) ? std::ceil(theme.Controls().gaugeWidth) : 36.0f;
+}
+
+namespace
+{
+// The web UI's .vu-meter: a 10 px readout, then 4 px down the ladder of eight 5 px segments
+// 2 px apart, 14 px wide.
+constexpr float kLadderTop = 14.0f;
+constexpr float kSegmentHeight = 5.0f;
+constexpr float kSegmentPitch = 7.0f;
+constexpr float kSegmentWidth = 14.0f;
+constexpr int kLadderSegments = 8;
+} // namespace
+
+float MeterBar::ColumnHeight(const Theme& theme)
+{
+    return ThemeGauge(theme) ? 84.0f
+                             : kLadderTop + kSegmentPitch * (kLadderSegments - 1) + kSegmentHeight;
 }
 
 el::view_limits MeterBar::limits(const el::basic_context&) const
@@ -499,7 +638,8 @@ el::view_limits MeterBar::limits(const el::basic_context&) const
     if (mVertical)
     {
         const float w = ColumnWidth(mTheme);
-        return {{w, 84.0f}, {w, 84.0f}};
+        const float h = ColumnHeight(mTheme);
+        return {{w, h}, {w, h}};
     }
 
     return {{60.0f, 8.0f}, {el::full_extent, 8.0f}};
@@ -585,7 +725,8 @@ void MeterBar::draw(const el::context& ctx)
         }
 
         FillText(cnv, text, Font(Weight::SemiBold).size(9.0f), mTheme.TextSecondary(),
-                 el::rect{b.left - 6.0f, b.top, b.right + 6.0f, b.top + 12.0f}, Text::Align::Centre);
+                 el::rect{b.left - 6.0f, b.top, b.right + 6.0f, b.top + (Gauge() ? 12.0f : 10.0f)},
+                 Text::Align::Centre);
 
         if (Gauge())
         {
@@ -595,15 +736,18 @@ void MeterBar::draw(const el::context& ctx)
             return;
         }
 
-        constexpr int kSegments = 8;
+        constexpr int kSegments = kLadderSegments;
         const float level = static_cast<float>(std::clamp((mPeakDb + 60.0) / 60.0, 0.0, 1.0));
         const int lit = static_cast<int>(std::ceil(level * kSegments - 0.01f));
-        const float top = b.top + 16.0f, h = (b.bottom - top) / kSegments;
-        const float cx = (b.left + b.right) * 0.5f;
+        // From the readout down, the lowest segment at the ladder's foot: a taller column than the
+        // ladder (the compact Controls sheet's) leaves its room under it.
+        const float foot = b.top + ColumnHeight(mTheme);
+        const float cx = std::round((b.left + b.right) * 0.5f);
 
         for (int i = 0; i < kSegments; ++i)
         {
-            const el::rect seg{cx - 6.0f, b.bottom - (i + 1) * h + 1.0f, cx + 6.0f, b.bottom - i * h - 1.0f};
+            const float bottom = foot - static_cast<float>(i) * kSegmentPitch;
+            const el::rect seg{cx - kSegmentWidth * 0.5f, bottom - kSegmentHeight, cx + kSegmentWidth * 0.5f, bottom};
             el::color colour = mTheme.DarkOr(el::rgba(46, 46, 56, 255), mTheme.KnobRingTrack());
 
             if (i < lit)
@@ -692,7 +836,7 @@ ListRow::ListRow(const Theme& theme, std::string text, std::string secondary, bo
 
 el::view_limits ListRow::limits(const el::basic_context&) const
 {
-    const float h = mHeading ? 30.0f : metrics::kRowHeight;
+    const float h = mHeading ? 30.0f : !mNote.empty() ? std::max(44.0f, metrics::kRowHeight) : metrics::kRowHeight;
     return {{160.0f, h}, {el::full_extent, h}};
 }
 
@@ -743,8 +887,23 @@ void ListRow::draw(const el::context& ctx)
         textBounds.left += 28.0f;
     }
 
-    FillText(cnv, Ellipsize(cnv, mText, textFont, textBounds.width()), textFont, mTheme.Text(), textBounds,
-             Text::Align::Left);
+    const el::color ink = mTextInk.value_or(mTheme.Text());
+
+    if (mNote.empty())
+    {
+        FillText(cnv, Ellipsize(cnv, mText, textFont, textBounds.width()), textFont, ink, textBounds,
+                 Text::Align::Left);
+        return;
+    }
+
+    // The name over its note (.input-calibration-toolbar-item-copy): 13 over 11, 2 apart.
+    const float mid = b.top + b.height() * 0.5f;
+    const auto nameFont = Font(Weight::SemiBold).size(13.0f);
+    const auto noteFont = Font(Weight::Regular).size(11.0f);
+    FillText(cnv, Ellipsize(cnv, mText, nameFont, textBounds.width()), nameFont, ink,
+             el::rect{textBounds.left, mid - 17.0f, textBounds.right, mid}, Text::Align::Left);
+    FillText(cnv, Ellipsize(cnv, mNote, noteFont, textBounds.width()), noteFont, mTheme.TextMuted(),
+             el::rect{textBounds.left, mid + 1.0f, textBounds.right, mid + 15.0f}, Text::Align::Left);
 }
 
 bool ListRow::key(const el::context& ctx, el::key_info k)
@@ -763,7 +922,7 @@ AccessInfo ListRow::Describe() const
     AccessInfo info;
     info.role = AccessRole::ListItem;
     info.name = NameOr(mText);
-    info.value = mSecondary;
+    info.value = mNote.empty() ? mSecondary : mNote + (mSecondary.empty() ? "" : ", " + mSecondary);
     info.selected = mSelected;
     return info;
 }
@@ -778,6 +937,18 @@ bool ListRow::Activate(const el::rect&)
     const auto run = mOnClick; // it may rebuild the list this sits in
     run();
     return true;
+}
+
+ListRow& ListRow::Note(std::string note)
+{
+    mNote = std::move(note);
+    return *this;
+}
+
+ListRow& ListRow::TextInk(el::color ink)
+{
+    mTextInk = ink;
+    return *this;
 }
 
 ListRow& ListRow::Icon(Icons* icons, std::string name, el::color tint)

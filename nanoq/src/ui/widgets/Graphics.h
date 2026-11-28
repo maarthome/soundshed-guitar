@@ -107,6 +107,9 @@ class Images
 /// before it is drawn. UI thread.
 [[nodiscard]] float MeasureTextWidth(const std::string& text, const el::font_descr& font);
 
+/// The small offscreen canvas MeasureTextWidth measures on, for measuring more than one line.
+[[nodiscard]] artist::canvas& MeasureCanvas();
+
 /// Pictures downloaded at run time (tone sharing packs, Tone3000 tones, avatars), from bytes the
 /// caller fetched. Artist reads pictures from files, so each is written once to a cache folder
 /// and loaded from there. UI thread.
@@ -132,6 +135,8 @@ void DrawImageFitted(artist::canvas& cnv, const artist::image& image, el::rect b
 /// Draws `image` to fill `bounds` (cover), cropping what overflows: centred, or placed down it by
 /// `alignY` (0 its top, as CSS's object-position: top).
 void DrawImageCovering(artist::canvas& cnv, const artist::image& image, el::rect bounds, float alignY = 0.5f);
+/// A five-pointed star filling `r`, as the web UI's ★ (a preset's rating).
+void FillStar(artist::canvas& cnv, const el::rect& r, el::color colour);
 
 /// Strokes a rounded rectangle dashed, as CSS's `border-style: dashed`, in the stroke style and
 /// width already set: `dash` drawn and `gap` left out, all the way round.

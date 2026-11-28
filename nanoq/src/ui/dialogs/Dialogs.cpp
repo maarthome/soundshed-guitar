@@ -1,8 +1,10 @@
 // What floats over the page: a pop-up list, a text prompt and a confirmation (the effect picker is
 // chain/EffectPicker.cpp's). One at a time, over a dimmed view; a tap outside, or a choice, closes it.
+// A confirm or prompt opened from a dialog stacks over it, and Cancel goes back to that dialog.
 
 #include "ui/dialogs/DialogChrome.h"
 #include "ui/shell/Shell.h"
+#include "ui/input/AccessBridge.h"
 
 #include <algorithm>
 #include <chrono>
@@ -29,7 +31,19 @@ void Shell::ApplyElementsTheme()
 
 void Shell::ShowOverlay(Ptr panel, float width, float height)
 {
-    CloseOverlay();
+    const bool interrupts = std::exchange(mNextOverlayInterrupts, false);
+
+    if (interrupts && mOverlay && !mSuspendedOverlay && !mOptionsOpen)
+    {
+        // Kept as it is, live feeds and all, under the confirm's backdrop, which takes the clicks.
+        CloseDropdown();
+        mSuspendedOverlay = SuspendedOverlay{std::exchange(mOverlay, nullptr), std::exchange(mOverlayCancel, nullptr),
+                                             std::exchange(mOnOverlayClosed, nullptr)};
+    }
+    else
+    {
+        CloseOverlay();
+    }
 
     auto face = Over(std::move(panel), el::share(Surface(mTheme.Elevated(), mTheme.BorderStrong(), 12.0f)));
     // Expand: a column is only as wide as its narrowest row allows, and a row of fixed-size
@@ -48,7 +62,7 @@ void Shell::ShowDialog(DialogParts parts)
     title->Colour(mTheme.ModalText());
     auto close = std::make_shared<CloseCross>(mTheme);
     auto cancel = parts.onClose; // Esc and a tap outside do the same as the cross
-    close->onClick = parts.onClose ? std::move(parts.onClose) : std::function<void()>([this] { CloseOverlay(); });
+    close->onClick = parts.onClose ? std::move(parts.onClose) : std::function<void()>([this] { DismissOverlay(); });
     std::vector<Ptr> header{Stretch(title)};
 
     for (auto& extra : parts.headerExtras)
@@ -105,6 +119,14 @@ void Shell::ShowDialog(DialogParts parts)
 
     ShowOverlay(Over(Col(column), std::make_shared<DialogFace>(mTheme, footer)), width, height);
     mOverlayCancel = std::move(cancel);
+
+    // Told to a screen reader as a dialog with its title and message (role=dialog).
+    if (auto* router = dynamic_cast<KeyRouter*>(mOverlay.get()))
+    {
+        router->accessKind = KeyRouter::AccessKind::Dialog;
+        router->accessTitle = parts.title;
+        router->accessDescription = parts.description;
+    }
 }
 
 void Shell::CancelOverlay()
@@ -116,7 +138,37 @@ void Shell::CancelOverlay()
         return;
     }
 
-    CloseOverlay();
+    DismissOverlay();
+}
+
+void Shell::DismissOverlay()
+{
+    if (!mSuspendedOverlay)
+    {
+        CloseOverlay();
+        return;
+    }
+
+    // Only the confirm goes; the dialog under it is the overlay again, with the keys.
+    CloseDropdown();
+    auto parent = std::move(*mSuspendedOverlay);
+    mSuspendedOverlay.reset();
+    RemoveLayer(std::exchange(mOverlay, nullptr));
+    mOverlay = parent.layer;
+    mOverlayCancel = std::move(parent.cancel);
+    mOnOverlayClosed = std::move(parent.onClosed);
+
+    auto& view = mSession.View();
+    view.post([&view, layer = parent.layer] {
+        auto& layers = view.content();
+        const auto found = std::find(layers.begin(), layers.end(), layer);
+
+        if (found != layers.end())
+        {
+            layers.focus(static_cast<std::size_t>(found - layers.begin()));
+            view.refresh();
+        }
+    });
 }
 
 std::shared_ptr<Button> Shell::DialogButton(const std::string& label, std::function<void()> onClick, bool primary)
@@ -143,14 +195,37 @@ void Shell::CloseOverlay()
         closed();
     }
 
-    if (!mOverlay)
+    if (mOverlay)
     {
-        return;
+        auto overlay = std::move(mOverlay);
+        mOverlay.reset();
+        RemoveLayer(std::move(overlay));
     }
 
-    auto overlay = std::move(mOverlay);
-    mOverlay.reset();
-    RemoveLayer(std::move(overlay));
+    // A confirm opened over a dialog is done with: the dialog goes too (what it confirmed may
+    // reopen it, up to date).
+    if (mSuspendedOverlay)
+    {
+        auto parent = std::move(*mSuspendedOverlay);
+        mSuspendedOverlay.reset();
+
+        if (parent.onClosed)
+        {
+            parent.onClosed();
+        }
+
+        RemoveLayer(std::move(parent.layer));
+    }
+}
+
+void Shell::ShowBar(const SlotPtr& slot, Ptr bar)
+{
+    auto& view = mSession.View();
+    view.post([&view, slot, bar = std::move(bar)] {
+        Fill(*slot, bar ? bar : std::make_shared<NoHit>());
+        view.layout();
+        view.refresh();
+    });
 }
 
 void Shell::RemoveLayer(Ptr layer)
@@ -256,18 +331,76 @@ void Shell::OpenMenu(const std::string& title, std::vector<MenuItem> items)
 void Shell::OpenPrompt(const std::string& title, const std::string& initial, const std::string& confirmLabel,
                        std::function<void(const std::string&)> onSubmit)
 {
-    auto [boxElement, box] = el::input_box("Name", Font(Weight::Regular), 1.0f);
-    box->set_text(initial);
+    OpenPrompt(title, initial, confirmLabel, PromptOptions{}, std::move(onSubmit));
+}
 
-    auto submit = [this, box, onSubmit] {
-        auto text = box->get_utf8();
-        // Trim: a name that is only spaces is no name.
-        const auto first = text.find_first_not_of(" \t");
-        const auto last = text.find_last_not_of(" \t");
+void Shell::OpenPrompt(const std::string& title, const std::string& initial, const std::string& confirmLabel,
+                       PromptOptions options, std::function<void(const std::string&)> onSubmit)
+{
+    const float width = DialogWidth(ViewSize(), 420.0f);
+    std::vector<Ptr> rows;
+    float bodyHeight = 0.0f;
+
+    // What to enter, over the field (the web's prompt message).
+    if (!options.message.empty())
+    {
+        auto message = std::make_shared<Paragraph>(mTheme, options.message, width - 40.0f, metrics::kTextSize);
+        message->Colour(mTheme.ModalTextSecondary());
+        bodyHeight += message->Height() + 8.0f;
+        rows.push_back(message);
+        rows.push_back(VGap(8));
+    }
+
+    // One line, or several in a box that scrolls; either starts with its text selected, so
+    // typing replaces it (the web's field.select()).
+    std::function<std::string()> read;
+    std::shared_ptr<el::basic_input_box> line; // Enter there is OK, once OK is made
+
+    if (options.multiline)
+    {
+        auto box = el::share(el::basic_text_box{initial, Font(Weight::Regular)});
+        box->select_all();
+        read = [box] { return box->get_utf8(); };
+        auto field = VScroll(el::share(el::margin(el::rect{10.0f, 8.0f, 10.0f, 8.0f}, el::hold(box))));
+        rows.push_back(FixedHeight(110, Rounded(mTheme.Tertiary(), 3.0f, field)));
+        bodyHeight += 110.0f;
+    }
+    else
+    {
+        auto [boxElement, box] = el::input_box(options.placeholder, Font(Weight::Regular), 1.0f);
+        box->set_text(initial);
+        box->select_all();
+        read = [weak = std::weak_ptr<el::basic_input_box>(box)] {
+            const auto b = weak.lock();
+            return b ? b->get_utf8() : std::string();
+        };
+        box->on_escape = [this] { DismissOverlay(); };
+        // Named from the prompt's title, as the web's field labelled by its heading.
+        rows.push_back(FixedHeight(40, Labelled(title, el::share(std::move(boxElement)))));
+        bodyHeight += 40.0f;
+        line = box;
+    }
+
+    // Under the field: why OK did nothing, when nothing was entered.
+    auto note = std::make_shared<Text>(mTheme, "", metrics::kSmallText);
+    note->Colour(mTheme.Error());
+    rows.push_back(FixedHeight(22, Middle(note)));
+    bodyHeight += 22.0f;
+    rows.push_back(Stretch());
+
+    auto submit = [this, read, note, allowEmpty = options.allowEmpty, multiline = options.multiline, onSubmit] {
+        auto text = read();
+
+        // Trim: a name that is only spaces is no name. Several lines keep their own breaks.
+        const char* blank = multiline ? " \t\r\n" : " \t";
+        const auto first = text.find_first_not_of(blank);
+        const auto last = text.find_last_not_of(blank);
         text = first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
 
-        if (text.empty())
+        if (text.empty() && !allowEmpty)
         {
+            note->Set("Enter something first, or Cancel.");
+            mSession.View().refresh();
             return;
         }
 
@@ -275,38 +408,78 @@ void Shell::OpenPrompt(const std::string& title, const std::string& initial, con
         onSubmit(text);
     };
 
-    box->on_enter = [submit](std::string_view) {
-        submit();
-        return true;
-    };
-    box->on_escape = [this] { CloseOverlay(); };
+    if (line)
+    {
+        line->on_enter = [submit](std::string_view) {
+            submit();
+            return true;
+        };
+    }
 
+    mNextOverlayInterrupts = true;
     ShowDialog({.title = title,
-                .body = Col({FixedHeight(40, el::share(std::move(boxElement))), Stretch()}),
+                .body = Col(rows),
                 .actions = {DialogButton(
-                                "Cancel", [this] { CloseOverlay(); }, false),
+                                "Cancel", [this] { DismissOverlay(); }, false),
                             DialogButton(confirmLabel, submit, true)},
-                .width = DialogWidth(ViewSize(), 420.0f),
-                .height = kDialogHeaderHeight + kDialogFooterHeight + 76.0f});
+                .width = width,
+                .height = kDialogHeaderHeight + kDialogFooterHeight + 36.0f + bodyHeight,
+                .description = options.message});
 }
+
+namespace
+{
+/// The height a dialog of text takes: its lines, but no less than two.
+float TextDialogHeight(const Paragraph& body)
+{
+    return kDialogHeaderHeight + kDialogFooterHeight + 36.0f + std::max(50.0f, body.Height());
+}
+} // namespace
 
 void Shell::OpenConfirm(const std::string& title, const std::string& detail, const std::string& confirmLabel,
                         std::function<void()> onYes)
 {
-    auto body =
-        std::make_shared<Paragraph>(mTheme, detail, DialogWidth(ViewSize(), 460.0f) - 40.0f, metrics::kTextSize);
+    // As tall as its text; a window too short for it scrolls it (ShowDialog).
+    const float width = DialogWidth(ViewSize(), 460.0f);
+    auto body = std::make_shared<Paragraph>(mTheme, detail, width - 40.0f, metrics::kTextSize);
     body->Colour(mTheme.ModalTextSecondary());
     auto yes = [this, onYes] {
         CloseOverlay();
         onYes();
     };
+    mNextOverlayInterrupts = true;
     ShowDialog({.title = title,
                 .body = Col({body, Stretch()}),
                 .actions = {DialogButton(
-                                "Cancel", [this] { CloseOverlay(); }, false),
+                                "Cancel", [this] { DismissOverlay(); }, false),
                             DialogButton(confirmLabel, yes, true)},
-                .width = DialogWidth(ViewSize(), 460.0f),
-                .height = kDialogHeaderHeight + kDialogFooterHeight + 86.0f});
+                .width = width,
+                .height = TextDialogHeight(*body),
+                .description = detail});
+}
+
+void Shell::OpenAlert(const std::string& title, const std::string& message, std::function<void()> onClose)
+{
+    const float width = DialogWidth(ViewSize(), 460.0f);
+    auto body = std::make_shared<Paragraph>(mTheme, message, width - 40.0f, metrics::kTextSize);
+    body->Colour(mTheme.ModalTextSecondary());
+    // OK, the cross, Esc and a tap outside all close it and go on.
+    auto done = [this, onClose] {
+        DismissOverlay();
+
+        if (onClose)
+        {
+            onClose();
+        }
+    };
+    mNextOverlayInterrupts = true;
+    ShowDialog({.title = title,
+                .body = Col({body, Stretch()}),
+                .actions = {DialogButton("OK", done, true)},
+                .width = width,
+                .height = TextDialogHeight(*body),
+                .onClose = done,
+                .description = message});
 }
 
 void Shell::ShowToast(const std::string& title, const std::string& detail, bool isError)
@@ -322,6 +495,8 @@ void Shell::ShowToast(const std::string& title, const std::string& detail, bool 
     // no clicks.
     const float above = mKeyboard && mKeyboard->Showing() ? OnScreenKeyboard::PanelHeight(ViewSize().y) + 8.0f : 64.0f;
     auto toast = std::make_shared<Toast>(mTheme, title, detail, isError);
+    // Said too, as the web's toast region (aria-live): an error at once.
+    AccessBridge::Announce(detail.empty() ? title : title + ". " + detail, isError);
     mToast = el::share(el::align_bottom(el::align_center(el::margin({0.0f, 0.0f, 0.0f, above}, el::hold_any(toast)))));
     view.add(mToast, false);
 

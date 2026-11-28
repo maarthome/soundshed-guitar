@@ -3,6 +3,7 @@
  */
 
 #include "uiclient/UiCommands.h"
+#include "uiclient/VisualizerBackground.h"
 
 #include "dsp/FiniteCheck.h"
 #include "presets/PresetStorage.h"
@@ -13,6 +14,35 @@
 
 namespace guitarfx::uiclient
 {
+namespace
+{
+/// A composite's slot is one of its type's exposed resources, which the engine finds by id to
+/// learn what the slot's file sets inside it (resourceSelector.ts data-exposed-resource-id); the
+/// slot's index names it.
+void AttachExposedResource(const ClientState& state, nlohmann::json& payload, const std::string& nodeId,
+                           int resourceIndex)
+{
+    const auto* node = state.activePreset ? state.activePreset->graph.FindNode(nodeId) : nullptr;
+
+    if (node == nullptr || resourceIndex < 0 || node->type.rfind("composite:", 0) != 0)
+    {
+        return;
+    }
+
+    if (const auto* type = state.FindEffectType(node->type))
+    {
+        for (const auto& slot : type->exposedResources)
+        {
+            if (slot.resourceIndex == resourceIndex)
+            {
+                payload["exposedResourceId"] = slot.resourceId;
+                return;
+            }
+        }
+    }
+}
+} // namespace
+
 // ── Presets and scenes ─────────────────────────────────────────────────────
 
 void UiCommands::LoadPreset(const std::string& presetId, const std::string& sceneId)
@@ -90,6 +120,11 @@ void UiCommands::RenameScene(const std::string& sceneId, const std::string& titl
 void UiCommands::RemoveScene(const std::string& sceneId)
 {
     mClient.Send("removeScene", {{"sceneId", sceneId}});
+}
+
+void UiCommands::MoveScene(const std::string& sceneId, int toIndex)
+{
+    mClient.Send("moveScene", {{"sceneId", sceneId}, {"toIndex", toIndex}});
 }
 
 void UiCommands::SavePreset()
@@ -175,9 +210,9 @@ void UiCommands::RenamePreset(const std::string& name, const std::string& catego
                                 {"includeGlobalSignalChain", false}});
 }
 
-void UiCommands::NewPreset()
+void UiCommands::NewPreset(const std::string& configuration)
 {
-    mClient.Send("newPreset");
+    mClient.Send("newPreset", {{"configuration", configuration}});
 }
 
 void UiCommands::DeletePreset(const std::string& presetId)
@@ -354,6 +389,11 @@ void UiCommands::GetCompositePresetList()
     mClient.Send("getCompositePresetList");
 }
 
+void UiCommands::CancelCompositeEdit()
+{
+    mClient.Send("exitCompositeEditMode", {{"save", false}});
+}
+
 // ── Setlists ───────────────────────────────────────────────────────────────
 
 void UiCommands::SetSetlistCursor(int index)
@@ -443,17 +483,59 @@ void UiCommands::SetNodeParam(const std::string& nodeId, const std::string& key,
     mClient.Send("updateSignalPathNodeParam", {{"nodeId", nodeId}, {"paramKey", key}, {"value", value}});
 }
 
-void UiCommands::AddNode(const std::string& effectType, const std::string& afterNodeId)
+namespace
 {
-    mClient.Send("addSignalPathNode", {{"effectType", effectType}, {"insertAfter", afterNodeId}});
+/// The node options as addSignalPathNode and replaceSignalPathNode read them; each only when set.
+void AddNodeOptions(nlohmann::json& payload, const NodeOptions& options)
+{
+    if (!options.config.empty())
+    {
+        payload["config"] = options.config;
+    }
+
+    if (!options.label.empty())
+    {
+        payload["label"] = options.label;
+    }
+
+    if (!options.category.empty())
+    {
+        payload["category"] = options.category;
+    }
+
+    if (!options.params.empty())
+    {
+        payload["params"] = options.params;
+    }
+
+    if (!options.resources.empty())
+    {
+        auto resources = nlohmann::json::array();
+
+        for (const auto& r : options.resources)
+        {
+            resources.push_back({{"resourceType", r.type}, {"resourceId", r.id}});
+        }
+
+        payload["resources"] = std::move(resources);
+    }
+}
+} // namespace
+
+void UiCommands::AddNode(const std::string& effectType, const std::string& afterNodeId, const NodeOptions& options)
+{
+    nlohmann::json payload{{"effectType", effectType}, {"insertAfter", afterNodeId}};
+    AddNodeOptions(payload, options);
+    mClient.Send("addSignalPathNode", payload);
 }
 
-void UiCommands::AddNodeOnEdge(const std::string& effectType, const GraphEdge& edge)
+void UiCommands::AddNodeOnEdge(const std::string& effectType, const GraphEdge& edge, const NodeOptions& options)
 {
-    mClient.Send(
-        "addSignalPathNode",
-        {{"effectType", effectType},
-         {"edge", {{"from", edge.from}, {"to", edge.to}, {"fromPort", edge.fromPort}, {"toPort", edge.toPort}}}});
+    nlohmann::json payload{
+        {"effectType", effectType},
+        {"edge", {{"from", edge.from}, {"to", edge.to}, {"fromPort", edge.fromPort}, {"toPort", edge.toPort}}}};
+    AddNodeOptions(payload, options);
+    mClient.Send("addSignalPathNode", payload);
 }
 
 void UiCommands::RemoveNode(const std::string& nodeId)
@@ -487,9 +569,11 @@ void UiCommands::SetSplitBranchCount(const std::string& splitterId, int count)
     mClient.Send("setSplitBranchCount", {{"splitterId", splitterId}, {"count", count}});
 }
 
-void UiCommands::ReplaceNode(const std::string& nodeId, const std::string& effectType)
+void UiCommands::ReplaceNode(const std::string& nodeId, const std::string& effectType, const NodeOptions& options)
 {
-    mClient.Send("replaceSignalPathNode", {{"nodeId", nodeId}, {"newEffectType", effectType}});
+    nlohmann::json payload{{"nodeId", nodeId}, {"newEffectType", effectType}};
+    AddNodeOptions(payload, options);
+    mClient.Send("replaceSignalPathNode", payload);
 }
 
 void UiCommands::SetNodeChannelMode(const std::string& nodeId, const std::string& channelMode)
@@ -520,10 +604,18 @@ void UiCommands::SetNodeResource(const std::string& nodeId, const std::string& r
         payload["resourceIndex"] = resourceIndex;
     }
 
-    // A third-party plugin takes a while to load; the engine says when it has.
-    if (resourceType == "plugin" && !resourceId.empty())
+    AttachExposedResource(mClient.State(), payload, nodeId, resourceIndex);
+
+    // A third-party plugin takes a while to load; the engine says when it has. What failed
+    // before is no longer the question.
+    if (resourceType == "plugin")
     {
-        mClient.MutableState().pluginLoadsPending.insert(nodeId);
+        mClient.MutableState().pluginLoadFailures.erase(nodeId);
+
+        if (!resourceId.empty())
+        {
+            mClient.MutableState().pluginLoadsPending.insert(nodeId);
+        }
     }
 
     mClient.Send("updateNodeResource", std::move(payload));
@@ -539,6 +631,8 @@ void UiCommands::SetNodeResourceFile(const std::string& nodeId, const std::strin
     {
         payload["resourceIndex"] = resourceIndex;
     }
+
+    AttachExposedResource(mClient.State(), payload, nodeId, resourceIndex);
 
     mClient.Send("updateNodeResource", std::move(payload));
 }
@@ -567,11 +661,12 @@ void UiCommands::ExportLibraryArchive(bool allResources)
 
 void UiCommands::SaveLocalLibraryResource(const std::string& resourceType, const std::string& filePath,
                                           const std::string& name, const nlohmann::json& metadata,
-                                          const std::string& nodeId, int resourceIndex)
+                                          const std::string& nodeId, int resourceIndex, const std::string& category,
+                                          const std::vector<std::string>& tags)
 {
-    nlohmann::json payload = {
-        {"resourceType", resourceType},    {"filePath", filePath}, {"name", name},        {"category", ""},
-        {"tags", nlohmann::json::array()}, {"description", ""},    {"metadata", metadata}};
+    nlohmann::json payload = {{"resourceType", resourceType}, {"filePath", filePath}, {"name", name},
+                              {"category", category},         {"tags", tags},         {"description", ""},
+                              {"metadata", metadata}};
 
     if (!nodeId.empty())
     {
@@ -596,7 +691,8 @@ void UiCommands::BrowseResourceFolder()
     mClient.Send("browseResourceFolder");
 }
 
-void UiCommands::BrowseNodeResource(const std::string& nodeId, const std::string& resourceType, int resourceIndex)
+void UiCommands::BrowseNodeResource(const std::string& nodeId, const std::string& resourceType, int resourceIndex,
+                                    const std::string& category)
 {
     nlohmann::json payload = {{"nodeId", nodeId}, {"resourceType", resourceType}};
 
@@ -605,8 +701,16 @@ void UiCommands::BrowseNodeResource(const std::string& nodeId, const std::string
         payload["resourceIndex"] = resourceIndex;
     }
 
+    if (!category.empty())
+    {
+        payload["category"] = category;
+    }
+
+    AttachExposedResource(mClient.State(), payload, nodeId, resourceIndex);
+
     if (resourceType == "plugin")
     {
+        mClient.MutableState().pluginLoadFailures.erase(nodeId);
         mClient.MutableState().pluginLoadsPending.insert(nodeId);
     }
 
@@ -986,6 +1090,33 @@ void UiCommands::DeleteLibraryResource(const std::string& resourceType, const st
     mClient.Send("deleteLibraryResource", {{"resourceType", resourceType}, {"resourceId", resourceId}});
 }
 
+void UiCommands::ForgetLibraryResource(const std::string& resourceType, const std::string& resourceId)
+{
+    mClient.Send("cleanupResourceLibrary",
+                 {{"scope", resourceType},
+                  {"removeFiles", false},
+                  {"resources", nlohmann::json::array({{{"type", resourceType}, {"id", resourceId}}})}});
+}
+
+void UiCommands::CleanupResourceLibrary(const std::string& scope,
+                                        const std::vector<std::pair<std::string, std::string>>& resources,
+                                        bool removeFiles)
+{
+    auto list = nlohmann::json::array();
+
+    for (const auto& [type, id] : resources)
+    {
+        list.push_back({{"type", type}, {"id", id}});
+    }
+
+    mClient.Send("cleanupResourceLibrary", {{"scope", scope}, {"removeFiles", removeFiles}, {"resources", list}});
+}
+
+void UiCommands::BrowseLibraryResourcePath(const std::string& resourceType, const std::string& resourceId)
+{
+    mClient.Send("browseLibraryResourcePath", {{"resourceType", resourceType}, {"resourceId", resourceId}});
+}
+
 void UiCommands::QueryResourceUsage(const std::string& resourceType, const std::string& resourceId)
 {
     mClient.Send("queryResourceUsage", {{"resourceType", resourceType}, {"resourceId", resourceId}});
@@ -1019,6 +1150,22 @@ void UiCommands::AudioDevice(const std::string& action, nlohmann::json payload)
 
     payload["action"] = action;
     mClient.Send("audioDevice", std::move(payload));
+}
+
+void UiCommands::RunSignalPathTest()
+{
+    mClient.Send("runSignalPathTest", {{"frequency", 440}, {"duration", 1.0}});
+}
+
+void UiCommands::BrowseUiBackgroundImage()
+{
+    mClient.Send("browseUiBackgroundImage", nlohmann::json::object());
+}
+
+void UiCommands::ClearUiBackgroundImage()
+{
+    SetSetting(visualizer_background::kImageSetting, nullptr);
+    mClient.Send("clearUiBackgroundImage", nlohmann::json::object());
 }
 
 void UiCommands::OpenUrl(const std::string& url)
@@ -1087,7 +1234,8 @@ void UiCommands::GetAutomation()
 }
 
 void UiCommands::SetAutomationSlot(const std::string& slotId, const std::optional<std::string>& label,
-                                   const std::optional<std::string>& address, const std::string& presetId)
+                                   const std::optional<std::string>& address, const std::string& presetId,
+                                   const std::string& nodeSelector)
 {
     nlohmann::json payload = {{"slotId", slotId}};
 
@@ -1106,7 +1254,24 @@ void UiCommands::SetAutomationSlot(const std::string& slotId, const std::optiona
         payload["presetId"] = presetId;
     }
 
+    if (!nodeSelector.empty())
+    {
+        payload["nodeSelector"] = nodeSelector;
+    }
+
     mClient.Send("setAutomationSlot", std::move(payload));
+}
+
+void UiCommands::SetAutomationMidiMap(const std::string& slotId, const AutomationMidiMap& map)
+{
+    mClient.Send("setAutomationSlot", {{"slotId", slotId},
+                                       {"midiMap",
+                                        {{"eventType", map.eventType},
+                                         {"channel", map.channel},
+                                         {"controller", map.controller},
+                                         {"mode", map.mode},
+                                         {"sensitivity", map.sensitivity},
+                                         {"pickupRange", map.pickupRange}}}});
 }
 
 void UiCommands::ClearAutomationMidiMap(const std::string& slotId)
@@ -1136,11 +1301,18 @@ void UiCommands::SetAutomationValue(const std::string& slotId, double value, boo
     mClient.Send("setAutomationValue", std::move(payload));
 }
 
-void UiCommands::ArmMidiLearn(const std::string& slotId)
+void UiCommands::ArmMidiLearn(const std::string& slotId, std::optional<int> mode)
 {
     // The engine does not say which slot listens; this UI keeps it, as the web UI does.
     mClient.MutableState().automation.midiLearnSlotId = slotId;
-    mClient.Send("armMidiLearn", {{"slotId", slotId}});
+    nlohmann::json payload = {{"slotId", slotId}};
+
+    if (mode)
+    {
+        payload["mode"] = *mode;
+    }
+
+    mClient.Send("armMidiLearn", std::move(payload));
     mClient.Notify(Topic::Automation);
 }
 

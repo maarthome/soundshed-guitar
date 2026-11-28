@@ -234,6 +234,12 @@ class Theme
         return Argb(T().effectShellValueInk);
     }
 
+    /// A favourite's heart (--color-preset-favorite): the accent only on Dark.
+    [[nodiscard]] el::color PresetFavorite() const noexcept
+    {
+        return Argb(T().presetFavorite);
+    }
+
     /// How the theme draws the effect editor's controls: a knob's face, pointer and picture, a
     /// switch, the tabs, a group's box, a control's label and value (ControlSkin.h draws them).
     [[nodiscard]] const guitarfx::uiclient::theme::ControlSkin& Controls() const noexcept
@@ -416,10 +422,22 @@ inline constexpr float kTouchCompactMaxHeight = 850.0f;
 /// 1024 x 600 tablet less its system bars still splits. The web UI's rule (compactMode.ts) is the
 /// same.
 inline constexpr float kCompactSplitMinHeight = 520.0f;
+/// A compact window as tall as it is wide or taller stacks its bars, as the web UI's does
+/// (compactMode.ts's "stack"): a 36 px tab bar over the preset bar in place of the rail. It
+/// splits from 600 x 800 (COMPACT_SPLIT_MIN_WIDTH, COMPACT_SPLIT_MIN_HEIGHT).
+inline constexpr float kStackTabBarHeight = 36.0f;
+/// A compact window this high or lower is short (COMPACT_SHORT_MAX_HEIGHT: a phone held
+/// sideways, an 800 x 480 panel): the preset library puts its list first, its folders in a
+/// drop-down, and its cards closer. 1024 x 600 is not short.
+inline constexpr float kCompactShortMaxHeight = 500.0f;
+inline constexpr float kStackSplitMinWidth = 600.0f;
+inline constexpr float kStackSplitMinHeight = 800.0f;
 /// The compact split's stage (chain and editor, between the preset bar and the footer) shorter
 /// than this takes the chain as icon tiles whatever its length (signalPath/layout.ts's
 /// SIGNAL_PATH_SPLIT_FULL_NODES_MIN_STAGE).
-inline constexpr float kSplitCardsMinStage = 470.0f;
+inline constexpr float kSplitCardsMinStage = 480.0f;
+/// A folded control bar or chain: the row its chevron and label take.
+inline constexpr float kCollapsedBarHeight = 20.0f;
 /// The looper strip over the footer, open: compact and full.
 inline constexpr float kLooperStripHeight = 46.0f;
 inline constexpr float kWideLooperStripHeight = 50.0f;

@@ -6,6 +6,7 @@
 #include "uiclient/UiClient.h"
 #include "uiclient/FolderToneLookup.h"
 #include "uiclient/ResourceThumbnails.h"
+#include "uiclient/ToneSharing.h"
 
 #include "models/ContentHash.h"
 #include "uiclient/UiClientParsing.h"
@@ -21,6 +22,12 @@ void UiClient::RegisterLibraryHandlers()
 {
     On("effectCatalog", [this](const nlohmann::json& m) {
         mState.catalog = parse::EffectCatalog(m.value("catalog", nlohmann::json::array()));
+        Notify(Topic::Catalog);
+    });
+
+    // The saved Custom Effects, after one is saved, renamed or deleted.
+    On("customEffectLibrary", [this](const nlohmann::json& m) {
+        mState.customEffects = parse::CustomEffectLibrary(m.value("entries", nlohmann::json::array()));
         Notify(Topic::Catalog);
     });
 
@@ -218,6 +225,13 @@ void UiClient::RegisterLibraryHandlers()
         mState.globalChain.monoMode = m.value("monoMode", mState.globalChain.monoMode);
         mState.globalChain.inputChannel = m.value("inputChannel", mState.globalChain.inputChannel);
         mState.globalChain.dualMono = m.value("dualMono", mState.globalChain.dualMono);
+        auto& caps = mState.inputCapabilities;
+        caps.known = true;
+        caps.hostControlled = m.value("hostControlled", caps.hostControlled);
+        caps.inputChannels = m.value("inputChannels", caps.inputChannels);
+        caps.outputChannels = m.value("outputChannels", caps.outputChannels);
+        caps.effectiveMode = m.value("effectiveMode", caps.effectiveMode);
+        caps.dualMonoShared = m.value("dualMonoShared", caps.dualMonoShared);
         Notify(Topic::GlobalChain);
     });
 
@@ -270,6 +284,24 @@ void UiClient::RegisterLibraryHandlers()
             {
                 install.presetIds.push_back(id.get<std::string>());
             }
+        }
+
+        // Models it uses that could not be downloaded, their slots left empty: named in a notice
+        // that stays until it is read, as the web's install.ts.
+        std::vector<std::string> missing;
+
+        for (const auto& name : m.value("missingRemote", nlohmann::json::array()))
+        {
+            if (name.is_string() && std::find(missing.begin(), missing.end(), name.get<std::string>()) == missing.end())
+            {
+                missing.push_back(name.get<std::string>());
+            }
+        }
+
+        if (!missing.empty())
+        {
+            PostNotification({Notification::Kind::Alert, "Some models are missing",
+                              tones::MissingModelsNotice(install.presetIds.size(), missing)});
         }
 
         Notify(Topic::Tones);
@@ -353,6 +385,9 @@ void UiClient::RegisterLibraryHandlers()
 
     On("hostedPluginResourceLoadFailed", [this](const nlohmann::json& m) {
         MutableState().pluginLoadsPending.erase(m.value("nodeId", ""));
+        MutableState().pluginLoadFailures[m.value("nodeId", "")] = {
+            m.value("resourceId", std::string()), m.value("filePath", std::string()), m.value("message", std::string()),
+            m.value("errorCode", std::string())};
         Notify(Topic::ActivePreset);
         PostNotification({Notification::Kind::Error, "Plugin failed to load", m.value("message", "")});
     });
@@ -360,6 +395,7 @@ void UiClient::RegisterLibraryHandlers()
     // A plugin loaded, or the file dialog for one was cancelled: the node is no longer loading.
     On("hostedPluginResourceLoadCompleted", [this](const nlohmann::json& m) {
         MutableState().pluginLoadsPending.erase(m.value("nodeId", ""));
+        MutableState().pluginLoadFailures.erase(m.value("nodeId", ""));
         Notify(Topic::ActivePreset);
     });
     On("nodeResourceBrowseCancelled", [this](const nlohmann::json& m) {

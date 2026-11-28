@@ -168,7 +168,6 @@ std::string Shell::TonePreviewSignature() const
 void Shell::SyncTonePreview()
 {
     auto& service = mSession.Tones();
-    auto& view = mSession.View();
 
     // A link the standalone was started with, once the engine has said what it has.
     if (!mToneLinkTaken && mState.haveState)
@@ -197,13 +196,13 @@ void Shell::SyncTonePreview()
 
     mTonePreviewBarShown = signature;
 
-    if (mTonePreviewBar)
-    {
-        RemoveLayer(std::exchange(mTonePreviewBar, nullptr));
-    }
-
     if (service.PreviewItemId().empty())
     {
+        if (std::exchange(mTonePreviewBar, nullptr))
+        {
+            ShowBar(mPreviewBarSlot, nullptr);
+        }
+
         return;
     }
 
@@ -220,9 +219,9 @@ void Shell::SyncTonePreview()
                                             IconButton::Look::Ghost);
     dot->Size(24, 24).IconSize(13).Ink(mTheme.Accent());
     dot->Disabled(false);
-    auto text =
-        std::make_shared<Text>(mTheme, (service.IsPreviewLoading() ? "Loading preview: " : "Previewing: ") + item.title,
-                               metrics::kSmallText, Weight::Medium);
+    auto text = std::make_shared<Text>(
+        mTheme, (service.IsPreviewLoading() ? "Loading preview: " : "Previewing preset: ") + item.title,
+        metrics::kSmallText, Weight::Medium);
     auto install =
         std::make_shared<IconButton>(mTheme, mIcons, installed ? "" : "ui-download", IconButton::Look::Boxed);
     install->Size(installed || installing ? 86.0f : 30.0f, 28)
@@ -241,12 +240,12 @@ void Shell::SyncTonePreview()
     mTonePreviewBar = AvoidKeyboard(el::share(el::align_bottom(
         el::align_center(el::margin({0.0f, 0.0f, 0.0f, kBarAboveFooter},
                                     el::hold_any(FixedWidth(width, FixedHeight(kBarHeight, Expand(face)))))))));
-    view.add(mTonePreviewBar, false);
-    view.refresh();
+    ShowBar(mPreviewBarSlot, mTonePreviewBar);
 }
 
 void Shell::OpenToneLink(const tones::LinkTarget& target)
 {
+    mTonesSection = TonesSection::Community;
     ShowPage(Page::Tones);
     auto& service = mSession.Tones();
 

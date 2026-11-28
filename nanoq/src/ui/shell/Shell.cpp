@@ -2,8 +2,12 @@
 
 #include "WindowChrome.h"
 #include "ui/debug/DrawProbe.h"
+#include "ui/input/SystemPreferences.h"
 #include "ui/shell/ShellIcons.h"
+#include "ui/widgets/Tooltip.h"
 #include "ui/widgets/ControlSkin.h"
+#include "uiclient/FeatureFlags.h"
+#include "uiclient/VisualizerBackground.h"
 #include "uiclient/NodeLabels.h"
 
 #include <algorithm>
@@ -45,6 +49,9 @@ Shell::Shell(UiSession& session)
     mSession.onToast = [this](const std::string& title, const std::string& detail, bool isError) {
         ShowToast(title, detail, isError);
     };
+    mSession.onNeedTone3000Key = [this](std::function<void()> proceed, std::function<void()> cancel) {
+        OpenTone3000KeyDialog(true, std::move(proceed), std::move(cancel));
+    };
 
     // The Practice Tool's session lives as long as the window: its track plays on while other
     // pages are shown (JamPage.cpp).
@@ -73,6 +80,7 @@ Shell::~Shell()
     mAccess.reset(); // before the view's window goes: it unhooks from it
     mSession.Tones().RemoveListener(mToneListener);
     mSession.onToast = nullptr;
+    mSession.onNeedTone3000Key = nullptr;
 
     // A dialog still open goes with the window, and so must what it asked of the engine: the
     // tuner left on with the window closed kept the output muted, with nothing left to turn it
@@ -104,18 +112,62 @@ void Shell::Subscribe()
     // pads for it.
     on(Topic::Setlists, kPage);
     on(Topic::Catalog, kChain | kPage);
-    on(Topic::Resources, kChain | kPage);
+    // Settings shows the library only in its Library section, and refills just that list there:
+    // a rebuild would take the search box's focus and the page's scroll (and every row asks
+    // whether it is in use, each answer a Resources change).
+    mSubscriptions.push_back(client.Subscribe(Topic::Resources, [this] {
+        Mark(kChain);
+
+        if (mPage != Page::Settings)
+        {
+            Mark(kPage);
+        }
+        else if (mSettingsSection == SettingsSection::Library)
+        {
+            RefreshLibraryResults();
+        }
+    }));
     on(Topic::Tones, kPage);
     on(Topic::GlobalChain, kTransport);
     on(Topic::Mixer, kTransport | kScenes | kChain);
     on(Topic::Demo, kTransport);
-    // The Scale Guide's Play button turns to Stop and back (ScaleGuideSignature).
+    // The Scale Guide's Play button turns to Stop and back (ScaleGuideSignature), and the Riff
+    // Library's Play too (RiffSectionSignature).
     mSubscriptions.push_back(client.Subscribe(Topic::Demo, [this] {
         if (mPage == Page::Jam)
         {
             Mark(kPage);
         }
     }));
+
+    // An imported take, once the engine has made it the pending one: New Riff opens on it.
+    mSubscriptions.push_back(client.Subscribe(Topic::Riffs, [this] {
+        const auto& capture = mState.riffs.capture;
+
+        if (mRiffImportWaiting && capture.serial != mRiffImportSerial &&
+            capture.phase == guitarfx::uiclient::RiffCapture::Phase::Complete && capture.source == "import")
+        {
+            mRiffImportWaiting = false;
+            mSession.View().post([this, alive = std::weak_ptr<bool>(mAlive)] {
+                if (alive.lock())
+                {
+                    OpenRiffCapture(false);
+                }
+            });
+        }
+    }));
+
+    // The Riff Library section lists the riffs, and Loop while the looper can take one.
+    for (const auto topic : {Topic::Riffs, Topic::Looper})
+    {
+        mSubscriptions.push_back(client.Subscribe(topic, [this] {
+            if (mPage == Page::Jam && mJamSection == JamSection::Riffs)
+            {
+                Mark(kPage); // rebuilt only if what it lists changed (JamPageSignature)
+            }
+        }));
+    }
+
     // The layout library and its pictures, and the setting that picks a layout per effect: the
     // effect page is rebuilt only when what it shows changes (EffectPageSignature).
     mSubscriptions.push_back(client.Subscribe(Topic::EffectLayouts, [this] {
@@ -128,6 +180,16 @@ void Shell::Subscribe()
     }));
     mSubscriptions.push_back(client.Subscribe(Topic::Session, [this] {
         if (PlayShown())
+        {
+            Mark(kPage);
+        }
+        // Settings is patched in place, but a picture chosen or removed for the effect panel
+        // adds or takes away its preview, and Blend Tools shows or hides the Library section.
+        else if (mPage == Page::Settings &&
+                 (guitarfx::uiclient::visualizer_background::Url(mState.appSettings).value_or(std::string()) !=
+                      mSettingsPanelBackground ||
+                  guitarfx::uiclient::IsFeatureEnabled(mState, guitarfx::uiclient::Feature::BlendTools) !=
+                      mSettingsLibraryShown))
         {
             Mark(kPage);
         }
@@ -170,9 +232,14 @@ void Shell::BuildRoot()
     // because a theme change repaints it.
     mBgSlot = MakeSlot();
     Fill(*mBgSlot, el::share(el::box(mTheme.Background())));
+    mPreviewBarSlot = MakeSlot();
+    Fill(*mPreviewBarSlot, std::make_shared<NoHit>());
+    mJamBarSlot = MakeSlot();
+    Fill(*mJamBarSlot, std::make_shared<NoHit>());
     mFrameSlot = MakeSlot();
     mWide = WantsWide();
     mSplit = !mWide && WantsSplit();
+    mStack = !mWide && WantsStack();
     mTouch = TouchSizes();
     metrics::gTouchSizes = mTouch;
     Fill(*mFrameSlot, BuildFrame());
@@ -190,10 +257,13 @@ void Shell::BuildRoot()
             mTheme, [this](std::function<void()> fn) { mSession.PostToUi(std::move(fn)); });
     }
 
-    mKeys = std::make_shared<KeyRouter>(Over(MinSize(metrics::kMinWidth, metrics::kMinHeight, frame), mBgSlot));
+    mKeys = std::make_shared<KeyRouter>(Over(Over(mJamBarSlot, mPreviewBarSlot),
+                                             Over(MinSize(metrics::kMinWidth, metrics::kMinHeight, frame), mBgSlot)));
     mKeys->keyboard = mKeyboard;
     mKeys->onKey = [this](const el::key_info& k) { return HandleKey(k); };
-    mKeys->ringColour = [this] { return mTheme.Accent(); };
+    mKeys->onPageArrow = [this](const el::key_info& k) { return ScaleGuideArrow(k.key == el::key_code::right); };
+    mKeys->ringColour = [this] { return FocusRingColour(mTheme.Accent(), mTheme.Background()); };
+    mKeys->drawOver = [this](const el::context& ctx) { Tooltips::Draw(ctx, mTheme); };
     mKeys->onPointerDown = [this] { mChainFocused = false; };
     mKeys->onTrackDrop = [this](const el::drop_info& info, bool leaving) { TrackFileDrop(info, leaving); };
     mKeys->onDrop = [this](const el::drop_info& info) { return DropFiles(info); };
@@ -280,6 +350,12 @@ void Shell::Rebuild()
     // The full layout's play page holds the chain and the editor in one stage: it is put back
     // when the page comes back to it, and its regions built afresh with it.
     const bool playStage = PlayStageShown();
+
+    // The chain folded or unfolded: the stage is built again.
+    if (playStage && mPlayStageShown && ChainCollapsed() != mBuiltChainCollapsed)
+    {
+        mPlayStageShown = false;
+    }
 
     if (!playStage)
     {
@@ -405,7 +481,13 @@ void Shell::Rebuild()
     {
         const auto signature = SceneSignature();
 
-        if (signature == mSceneSignature)
+        // A name being typed into a chip keeps its row (sceneBadges.ts leaves the badges alone
+        // while the field has focus); the row catches up when the field closes.
+        if (mSceneRenaming)
+        {
+            mDirty &= ~kScenes;
+        }
+        else if (signature == mSceneSignature)
         {
             mDirty &= ~kScenes;
         }
@@ -518,8 +600,10 @@ void Shell::OnTick()
     KeyRouter::Retake(mSession.View());
     TickKeyboard();
     TickLooper();
+    TickToneSearch();
     TickFilePicker();
     SyncZoom();
+    ShowNativeUiBetaNoticeOnce();
     {
         const auto wheel = mState.appSettings.find("ui.mouseWheelAdjustsControls");
         ParamKnob::sWheelAdjusts = wheel == mState.appSettings.end() || !wheel->is_boolean() || wheel->get<bool>();
@@ -531,6 +615,12 @@ void Shell::OnTick()
     // A press held still is a right click (LongPress.h).
     LongPress::Tick();
 
+    // A tooltip came up or went: drawn over everything, so the window is redrawn.
+    if (Tooltips::Tick())
+    {
+        mSession.View().refresh();
+    }
+
     // A chain card rested on long enough is picked up, and lifts to say so (TouchHold.h).
     if (TouchHold::Tick() && mChainSlot)
     {
@@ -541,10 +631,16 @@ void Shell::OnTick()
     const bool touch = TouchSizes();
 
     // Touch sizes change every bar's height and every control's room, so they rebuild it all.
-    if (const bool split = !wide && WantsSplit(); wide != mWide || split != mSplit || touch != mTouch)
+    // A folded or unfolded control bar changes the frame's bar heights too.
+    const bool stack = !wide && WantsStack();
+
+    if (const bool split = !wide && WantsSplit(); wide != mWide || split != mSplit || stack != mStack ||
+                                                  touch != mTouch ||
+                                                  (wide && mWide && ControlsCollapsed() != mBuiltControlsCollapsed))
     {
         mWide = wide;
         mSplit = split;
+        mStack = stack;
         mTouch = touch;
         metrics::gTouchSizes = touch;
         mPlayStageShown = false;
@@ -584,6 +680,12 @@ void Shell::OnTick()
     // Errors and confirmations the engine sent (a save that failed, a preset saved).
     for (auto& n : mSession.Client().TakeNotifications())
     {
+        if (n.kind == guitarfx::uiclient::Notification::Kind::Alert)
+        {
+            OpenAlert(n.title, n.detail);
+            continue;
+        }
+
         ShowToast(n.title, n.detail, n.kind == guitarfx::uiclient::Notification::Kind::Error);
     }
 
@@ -621,7 +723,93 @@ void Shell::OnTick()
 
     if (mAccess)
     {
+        AnnounceRigChanges();
         mAccess->Tick();
+    }
+}
+
+void Shell::AnnounceRigChanges()
+{
+    SaidRig now;
+    now.known = mState.activePreset.has_value();
+
+    if (now.known)
+    {
+        now.presetId = mState.activePresetId;
+        const auto* scene = mState.ActiveScene();
+        now.sceneId = scene != nullptr ? scene->id : std::string();
+
+        for (const auto& node : mState.activePreset->graph.nodes)
+        {
+            now.nodes.emplace_back(node.id, node.enabled);
+        }
+    }
+
+    const auto was = std::exchange(mSaidRig, now);
+
+    // The first state, and a preset with nothing loaded, are not news.
+    if (!was.known || !now.known)
+    {
+        return;
+    }
+
+    const auto nameOf = [this](const std::string& id) {
+        const auto* node = mState.activePreset->graph.FindNode(id);
+        return node != nullptr ? guitarfx::uiclient::NodeDisplayName(mState, *node) : std::string();
+    };
+
+    if (now.presetId != was.presetId)
+    {
+        AccessBridge::Announce("Preset " + mState.activePreset->name);
+        return;
+    }
+
+    if (now.sceneId != was.sceneId && !now.sceneId.empty())
+    {
+        if (const auto* scene = mState.ActiveScene())
+        {
+            AccessBridge::Announce("Scene " + scene->title);
+        }
+
+        return;
+    }
+
+    std::vector<std::string> said;
+
+    for (const auto& [id, enabled] : now.nodes)
+    {
+        const auto it =
+            std::find_if(was.nodes.begin(), was.nodes.end(), [&id](const auto& n) { return n.first == id; });
+
+        if (it == was.nodes.end())
+        {
+            said.push_back(nameOf(id) + " added");
+        }
+        else if (it->second != enabled)
+        {
+            said.push_back(nameOf(id) + (enabled ? " on" : " bypassed"));
+        }
+    }
+
+    for (const auto& [id, enabled] : was.nodes)
+    {
+        if (std::none_of(now.nodes.begin(), now.nodes.end(), [&id](const auto& n) { return n.first == id; }))
+        {
+            said.push_back("Effect removed");
+        }
+    }
+
+    // A whole chain swapped (undo, a scene's graph): one line, not one per effect.
+    if (said.size() > 3)
+    {
+        AccessBridge::Announce("Chain changed");
+    }
+    else
+    {
+        for (auto& line : said)
+        {
+            AccessBridge::Announce(std::move(line));
+        }
     }
 }
 

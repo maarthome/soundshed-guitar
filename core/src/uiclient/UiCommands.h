@@ -13,11 +13,29 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
 #include <vector>
 #include <string>
 
 namespace guitarfx::uiclient
 {
+/// What a node starts with besides its type, as the web UI's SignalPathNodeOptions: a blend's
+/// id, or a saved Custom Effect's id, name, category, settings and module.
+struct NodeOptions
+{
+    struct Resource
+    {
+        std::string type;
+        std::string id;
+    };
+
+    std::map<std::string, std::string> config;
+    std::string label;
+    std::string category;
+    std::map<std::string, double> params;
+    std::vector<Resource> resources;
+};
+
 class UiCommands
 {
   public:
@@ -34,6 +52,8 @@ class UiCommands
     void AddScene(const std::string& title = {});
     void RenameScene(const std::string& sceneId, const std::string& title);
     void RemoveScene(const std::string& sceneId);
+    /// The scene moved to `toIndex` in the preset's list (sceneBadges.ts drag and Alt+arrows).
+    void MoveScene(const std::string& sceneId, int toIndex);
     void SavePreset();
     void SavePresetAs(const std::string& name, const std::string& category, const std::string& description);
 
@@ -55,7 +75,8 @@ class UiCommands
     /// Saves the preset playing with these details: over itself, or (`asNew`) as a new preset.
     void SavePresetWithDetails(const PresetDetails& details, bool asNew);
     void RenamePreset(const std::string& name, const std::string& category, const std::string& description);
-    void NewPreset();
+    /// A new, unsaved preset (newPreset): "basic" (the engine's starting chain) or "empty".
+    void NewPreset(const std::string& configuration = "basic");
     void DeletePreset(const std::string& presetId);
     void SetPresetFavorite(const std::string& presetId, bool favorite);
     /// 1 to 5 stars, or 0 to clear.
@@ -107,6 +128,8 @@ class UiCommands
     void LoadCompositePreset(const std::string& id);
     void RemoveCompositePreset(const std::string& id);
     void GetCompositePresetList();
+    /// Leaves the web UI's composite editor without saving (exitCompositeEditMode).
+    void CancelCompositeEdit();
 
     // ── Setlists ────────────────────────────────────────────────────────────
     void SetSetlistCursor(int index);
@@ -121,10 +144,10 @@ class UiCommands
     /// chain's undo does when the change it reverses rebuilt the chain (history.ts,
     /// applyWholeGraph). The engine compares the result with the preset as saved for dirty.
     void LoadActivePresetWithGraph(const SignalGraph& graph);
-    void AddNode(const std::string& effectType, const std::string& afterNodeId);
+    void AddNode(const std::string& effectType, const std::string& afterNodeId, const NodeOptions& options = {});
     /// Adds an effect on one edge of the graph: the way into a parallel branch, which "after a
     /// node" cannot name.
-    void AddNodeOnEdge(const std::string& effectType, const GraphEdge& edge);
+    void AddNodeOnEdge(const std::string& effectType, const GraphEdge& edge, const NodeOptions& options = {});
     void RemoveNode(const std::string& nodeId);
     void MoveNode(const std::string& nodeId, const std::string& afterNodeId);
     /// Moves a node onto an edge of the graph: a cable, which may be inside a parallel branch.
@@ -133,7 +156,7 @@ class UiCommands
     /// Gives a split 2 to 4 branches; the engine adds empty ones and removes only empty ones.
     void SetSplitBranchCount(const std::string& splitterId, int count);
     /// Puts another effect in the node's place, as the web UI's FX library replace does.
-    void ReplaceNode(const std::string& nodeId, const std::string& effectType);
+    void ReplaceNode(const std::string& nodeId, const std::string& effectType, const NodeOptions& options = {});
     /// The node's own name; empty hands it back its automatic one.
     void RenameNode(const std::string& nodeId, const std::string& title);
     /// Which channels a node takes: "" (follow what arrives), "mono" (summed), "monoLeft" or
@@ -145,7 +168,9 @@ class UiCommands
                          int resourceIndex = -1);
     /// Asks the engine to show a file dialog and load the chosen file into the node's slot,
     /// adding it to the library.
-    void BrowseNodeResource(const std::string& nodeId, const std::string& resourceType, int resourceIndex = -1);
+    /// `category` files the import (the slot's: cab or reverb for an IR, the gear for a model).
+    void BrowseNodeResource(const std::string& nodeId, const std::string& resourceType, int resourceIndex = -1,
+                            const std::string& category = {});
     /// Loads a file into a node's slot by path, as the resource browser's Folder tab previews
     /// one, without adding it to the library.
     void SetNodeResourceFile(const std::string& nodeId, const std::string& resourceType, const std::string& filePath,
@@ -160,7 +185,8 @@ class UiCommands
     /// place rather than copied; with a node, loads it into that node's slot too.
     void SaveLocalLibraryResource(const std::string& resourceType, const std::string& filePath, const std::string& name,
                                   const nlohmann::json& metadata, const std::string& nodeId = {},
-                                  int resourceIndex = -1);
+                                  int resourceIndex = -1, const std::string& category = {},
+                                  const std::vector<std::string>& tags = {});
     /// Stars or unstars a library resource (the shared resources.favorites setting).
     void SetResourceFavorite(const std::string& resourceId, bool favorite);
     /// Renames, recategorises or retags a library resource (updateLibraryResource).
@@ -168,6 +194,15 @@ class UiCommands
                                const std::string& category, const std::vector<std::string>& tags);
     /// Deletes one; the engine refuses one in use (resourceDeleteFailed), else resourceRemoved.
     void DeleteLibraryResource(const std::string& resourceType, const std::string& resourceId);
+    /// Takes one out of the library and leaves its file where it is (cleanupResourceLibrary with
+    /// removeFiles false): a scanned plugin, as the web UI's plugin host removes one.
+    void ForgetLibraryResource(const std::string& resourceType, const std::string& resourceId);
+    /// Removes these (type, id) entries from the library, and their own files with `removeFiles`
+    /// (cleanupResourceLibrary). The engine keeps any in use, and any outside the scope.
+    void CleanupResourceLibrary(const std::string& scope,
+                                const std::vector<std::pair<std::string, std::string>>& resources, bool removeFiles);
+    /// Asks for a file to point a local library entry at (browseLibraryResourcePath).
+    void BrowseLibraryResourcePath(const std::string& resourceType, const std::string& resourceId);
     /// Asks what uses a resource; answered into ClientState::resourceUsage.
     void QueryResourceUsage(const std::string& resourceType, const std::string& resourceId);
     /// Writes the library as one archive through a save dialog (exportLibraryArchive): the
@@ -241,6 +276,13 @@ class UiCommands
     /// the stored one whole.
     void PatchUiSettings(const nlohmann::json& patch);
     void AudioDevice(const std::string& action, nlohmann::json payload = nlohmann::json::object());
+    /// Runs a 440 Hz tone through the chain for a second; the result arrives as a notification.
+    void RunSignalPathTest();
+    /// Asks the engine for a picture to put behind the effect panel; it answers
+    /// "uiBackgroundImageSelected", which stores its route (VisualizerBackground.h).
+    void BrowseUiBackgroundImage();
+    /// Takes the effect panel's picture away, and the engine's copy of it.
+    void ClearUiBackgroundImage();
     void OpenUrl(const std::string& url);
 
     // ── Tone sharing ────────────────────────────────────────────────────────────
@@ -264,8 +306,12 @@ class UiCommands
     void GetAutomation();
     /// Creates or edits a slot. Only the fields given change: `label` and `address` (a custom
     /// slot's target; "" for none yet), and `presetId` for a new per-preset slot.
+    /// `nodeSelector` ("id:<nodeId>") ties a per-preset slot to one node of its type.
     void SetAutomationSlot(const std::string& slotId, const std::optional<std::string>& label,
-                           const std::optional<std::string>& address, const std::string& presetId = {});
+                           const std::optional<std::string>& address, const std::string& presetId = {},
+                           const std::string& nodeSelector = {});
+    /// Replaces a slot's MIDI mapping (the panel's mode picker changes its mode).
+    void SetAutomationMidiMap(const std::string& slotId, const AutomationMidiMap& map);
     /// Removes a slot's MIDI mapping, or its key mappings; the slot itself stays.
     void ClearAutomationMidiMap(const std::string& slotId);
     void ClearAutomationKeyMap(const std::string& slotId);
@@ -275,7 +321,8 @@ class UiCommands
     /// the state it is in, rather than set `value`, which can be out of date.
     void SetAutomationValue(const std::string& slotId, double value, bool toggle = false);
     /// Listens for the next MIDI event on a slot, replacing any learn already armed.
-    void ArmMidiLearn(const std::string& slotId);
+    /// With a `mode`, the captured mapping takes it (MidiControlMap::Mode); without, Absolute.
+    void ArmMidiLearn(const std::string& slotId, std::optional<int> mode = std::nullopt);
     void CancelMidiLearn();
     /// The engine forwards incoming MIDI as midiLog while enabled; a UI enables it only while
     /// its log is on screen.
@@ -318,6 +365,15 @@ class UiCommands
     /// Saves the pending take (riffSaved, then riffLibraryState).
     void SaveRiffTake(const RiffSave& save);
     void DeleteRiff(const std::string& riffId);
+    /// Where the takes and their index are kept (the web's Storage > Set Path); a riffLibraryState
+    /// with the folder's riffs follows.
+    void SetRiffLibraryPath(const std::string& path);
+    /// An audio file (WAV, AIFF or MP3) made the pending take, to trim and save as a riff (the web's
+    /// drop import); its bars are counted from its length at this tempo and time signature.
+    void ImportRiffWav(const std::vector<std::uint8_t>& bytes, const std::string& fileName, double tempoBpm,
+                       int timeSigNum, int timeSigDen);
+    /// The host's file browser for that audio file (browseRiffImportFile), then imported as above.
+    void BrowseRiffImportFile(double tempoBpm, int timeSigNum, int timeSigDen);
     void SetRiffFavorite(const std::string& riffId, bool favorite);
     void MarkRiffUsed(const std::string& riffId, bool used, const std::string& songTitle = {});
     /// Plays a library take, looping, with the guidance click (the riff list's Preview).

@@ -134,6 +134,11 @@ void Shell::SyncDspDiagnostics(bool refresh)
     const double now = UiSession::Now();
     mDspDiagnostics.Update(mState, now);
 
+    if (mState.telemetry.frameCounter > 0)
+    {
+        mDspRawPeak.Push(mState.telemetry.rawInput.peakDb, now);
+    }
+
     if (!refresh && (mDspFiguresShown.expired() || !mDspDiagnostics.TakeRenderTurn(now)))
     {
         return;
@@ -145,6 +150,9 @@ void Shell::SyncDspDiagnostics(bool refresh)
     mDspSnapshot.input = mDspDiagnostics.Input(mState);
     mDspSnapshot.output = mDspDiagnostics.Output(mState);
     mDspSnapshot.table = mDspDiagnostics.Table(mState);
+    mDspSnapshot.designedPeak = guitarfx::uiclient::FormatPeakDb(
+        mState.activePreset ? mState.activePreset->designedPeakInputDbfs : std::optional<double>{});
+    mDspSnapshot.rawPeak = guitarfx::uiclient::FormatPeakDb(mDspRawPeak.Peak());
 
     // A node added or removed: the table is laid out again with the page.
     if (!refresh && mSettingsSection == SettingsSection::Dsp && mDspSettingsTab == 0 &&
@@ -189,6 +197,7 @@ Ptr Shell::BuildDspDiagnostics(float width)
     };
     const auto heading = [this](const std::string& text, bool right) {
         auto t = std::make_shared<Text>(mTheme, Upper(text), 9.5f, Weight::SemiBold);
+        t->AccessHeading(3); // a section title, to a screen reader
         t->Colour(mTheme.TextSecondary()).Alignment(right ? HAlign::Right : HAlign::Left);
         return t;
     };
@@ -198,6 +207,16 @@ Ptr Shell::BuildDspDiagnostics(float width)
         t->Alignment(HAlign::Right);
         mLive.Bind(t, std::move(read), [this](Text& text, const std::pair<bool, int>& clip) {
             text.Set(clip.first ? "\xE2\x97\x8F " + std::to_string(clip.second) : "\xE2\x97\x8F");
+            text.Colour(clip.first ? mTheme.Error() : mTheme.Success());
+        });
+        return t;
+    };
+    // The summary's clipping, in words (.signal-clip-status): OK, or Clipping with the count.
+    const auto clipWords = [this](std::function<std::pair<bool, int>()> read) {
+        auto t = std::make_shared<Text>(mTheme, "", 11.5f, Weight::SemiBold);
+        t->Alignment(HAlign::Right);
+        mLive.Bind(t, std::move(read), [this](Text& text, const std::pair<bool, int>& clip) {
+            text.Set(clip.first ? "Clipping (" + std::to_string(clip.second) + ")" : std::string("OK"));
             text.Colour(clip.first ? mTheme.Error() : mTheme.Success());
         });
         return t;
@@ -220,18 +239,21 @@ Ptr Shell::BuildDspDiagnostics(float width)
                                                                true, mTheme.Ink()))),
                                     FixedWidth(86, Middle(cell(field(&guitarfx::uiclient::DspLevelSummary::headroom),
                                                                11.5f, true, mTheme.Ink()))),
-                                    FixedWidth(56, Middle(clipCell([this, which] {
+                                    FixedWidth(96, Middle(clipWords([this, which] {
                                                    const auto& s = mDspSnapshot.*which;
                                                    return std::make_pair(s.clipped, s.clipCount);
                                                })))}));
         };
 
         auto t = std::make_shared<Text>(mTheme, "SIGNAL DIAGNOSTICS", 13.0f, Weight::SemiBold);
-        parts.push_back(FixedHeight(24, Middle(t)));
+        t->Fixed(true);
+        auto status = std::make_shared<Text>(mTheme, "Enabled", 12.0f, Weight::Medium);
+        status->Colour(mTheme.Success());
+        parts.push_back(FixedHeight(24, Row({Middle(t), HGap(10), Middle(status), Stretch()})));
         parts.push_back(FixedHeight(
             18, Row({Middle(heading("", false)), FixedWidth(96, Middle(heading("Peak", true))),
                      FixedWidth(96, Middle(heading("RMS", true))), FixedWidth(86, Middle(heading("Headroom", true))),
-                     FixedWidth(56, Middle(heading("Clip", true)))})));
+                     FixedWidth(96, Middle(heading("Clip", true)))})));
         parts.push_back(rule());
         parts.push_back(summaryRow("Input", &DspSnapshot::input));
         parts.push_back(summaryRow("Output", &DspSnapshot::output));
@@ -268,6 +290,29 @@ Ptr Shell::BuildDspDiagnostics(float width)
 
     auto title = std::make_shared<Text>(mTheme, "PER-NODE DIAGNOSTICS", 13.0f, Weight::SemiBold);
     parts.push_back(FixedHeight(24, Middle(title)));
+
+    // The preset's designed peak input beside what the input reaches now (.designed-peak-input-section).
+    {
+        const auto metric = [&](const char* name, std::string DspSnapshot::* field) {
+            auto label = std::make_shared<Text>(mTheme, name, 11.5f);
+            label->Colour(mTheme.TextSecondary()).Fixed(true);
+            return FixedHeight(
+                22, Row({Middle(label), HGap(8),
+                         Middle(cell([this, field] { return mDspSnapshot.*field; }, 11.5f, false, mTheme.Ink())),
+                         Stretch()}));
+        };
+        parts.push_back(metric("Preset Designed Peak Input:", &DspSnapshot::designedPeak));
+        parts.push_back(metric("Current Raw Input Peak (10s hold):", &DspSnapshot::rawPeak));
+        parts.push_back(VGap(8));
+    }
+
+    if (mState.telemetry.frameCounter == 0)
+    {
+        auto waiting = std::make_shared<Text>(mTheme, "Waiting for signal data.", 11.5f);
+        waiting->Colour(mTheme.TextMuted());
+        parts.push_back(FixedHeight(28, Middle(waiting)));
+        return Col(parts);
+    }
 
     {
         std::vector<Ptr> header = {Middle(heading("Node", false))};

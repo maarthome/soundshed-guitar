@@ -3,7 +3,10 @@
 
 #include "ui/shell/Shell.h"
 
+#include <optional>
+
 #include <algorithm>
+#include <cmath>
 
 namespace nanoq::ui
 {
@@ -14,8 +17,21 @@ namespace
 class ClickCatcher final : public el::element
 {
   public:
-    explicit ClickCatcher(std::function<void()> onClick) : mOnClick(std::move(onClick))
+    explicit ClickCatcher(std::function<void()> onClick, std::optional<el::rect> passThrough = std::nullopt)
+        : mOnClick(std::move(onClick)), mPassThrough(passThrough)
     {
+    }
+
+    /// Nothing under it in `passThrough`: a tap there reaches what is under the layer, which
+    /// stays open (the looper strip under its Loops and Options drop-downs, as the web's).
+    el::element* hit_test(const el::context& ctx, el::point p, bool leaf, bool control) override
+    {
+        if (mPassThrough && mPassThrough->includes(p))
+        {
+            return nullptr;
+        }
+
+        return el::element::hit_test(ctx, p, leaf, control);
     }
 
     bool click(const el::context&, el::mouse_button btn) override
@@ -35,6 +51,7 @@ class ClickCatcher final : public el::element
 
   private:
     std::function<void()> mOnClick;
+    std::optional<el::rect> mPassThrough;
 };
 
 /// A row of a drop-down (.preset-extra-action-item): 12 px text, a hover wash, a tick when chosen.
@@ -70,6 +87,12 @@ class MenuRow final : public Pressable
         mSubtitle = std::move(subtitle);
     }
 
+    /// A heading's badge at its right (.input-mode-flyout-running): a warning pill.
+    void Badge(std::string badge)
+    {
+        mBadge = std::move(badge);
+    }
+
     [[nodiscard]] static float Height(bool heading, bool emptyHeading, bool twoLine)
     {
         return heading ? (emptyHeading ? 9.0f : 24.0f) : (twoLine ? 44.0f : 31.0f);
@@ -97,12 +120,28 @@ class MenuRow final : public Pressable
 
             FillText(cnv, Upper(mLabel), Font(Weight::SemiBold).size(9.0f), mTheme.TextMuted(),
                      el::rect{b.left + 12.0f, b.top + 6.0f, b.right - 8.0f, b.bottom}, HAlign::Left);
+
+            if (!mBadge.empty())
+            {
+                const auto font = Font(Weight::SemiBold).size(9.0f);
+                const auto text = Upper(mBadge);
+                const float w = TrackedWidth(cnv, text, font, 0.08f) + 14.0f;
+                const float cy = b.top + 6.0f + (b.bottom - b.top - 6.0f) * 0.5f;
+                const el::rect pill{b.right - 8.0f - w, cy - 8.0f, b.right - 8.0f, cy + 8.0f};
+                cnv.fill_style(mTheme.Warning().opacity(0.16f));
+                cnv.fill_round_rect(pill, 8.0f);
+                FillTrackedText(cnv, text, font, mTheme.Warning(), pill, HAlign::Centre, 0.08f);
+            }
+
             return;
         }
 
-        if (mHover || mSelected)
+        // A mode that cannot be had (.input-mode-option:disabled): the row at 45%.
+        const float fade = mEnabled ? 1.0f : 0.45f;
+
+        if ((mHover && mEnabled) || mSelected)
         {
-            cnv.fill_style(mHover ? mTheme.Text().opacity(0.07f) : mTheme.Accent().opacity(0.1f));
+            cnv.fill_style(mHover && mEnabled ? mTheme.Text().opacity(0.07f) : mTheme.Accent().opacity(0.1f));
             cnv.fill_round_rect(b, 6.0f);
         }
 
@@ -113,15 +152,15 @@ class MenuRow final : public Pressable
             // The icon on a tile of its own (.input-mode-option-icon).
             const float cy = b.top + b.height() * 0.5f;
             const el::rect tile{b.left + 8.0f, cy - 15.0f, b.left + 48.0f, cy + 15.0f};
-            cnv.fill_style(mSelected ? mTheme.Accent().opacity(0.14f) : mTheme.Text().opacity(0.06f));
+            cnv.fill_style(mSelected ? mTheme.Accent().opacity(0.14f) : mTheme.Text().opacity(0.06f * fade));
             cnv.fill_round_rect(tile, 6.0f);
             mIcons->Draw(cnv, mIcon, el::rect{tile.left + 5.0f, cy - 10.0f, tile.left + 35.0f, cy + 10.0f},
-                         mSelected ? mTheme.Accent() : mTheme.TextSecondary());
+                         (mSelected ? mTheme.Accent() : mTheme.TextSecondary()).opacity(fade));
             left = tile.right + 10.0f;
         }
 
         const auto font = Font(Weight::SemiBold).size(12.0f);
-        const el::color labelInk = mSelected ? mTheme.Accent() : mInk;
+        const el::color labelInk = (mSelected ? mTheme.Accent() : mInk).opacity(fade);
 
         if (mSubtitle.empty())
         {
@@ -134,8 +173,8 @@ class MenuRow final : public Pressable
             const auto small = Font(Weight::Regular).size(10.5f);
             FillText(cnv, Ellipsize(cnv, mLabel, font, b.right - 22.0f - left), font, labelInk,
                      el::rect{left, mid - 16.0f, b.right - 22.0f, mid}, HAlign::Left);
-            FillText(cnv, Ellipsize(cnv, mSubtitle, small, b.right - 22.0f - left), small, mTheme.TextMuted(),
-                     el::rect{left, mid, b.right - 22.0f, mid + 14.0f}, HAlign::Left);
+            FillText(cnv, Ellipsize(cnv, mSubtitle, small, b.right - 22.0f - left), small,
+                     mTheme.TextMuted().opacity(fade), el::rect{left, mid, b.right - 22.0f, mid + 14.0f}, HAlign::Left);
         }
 
         if (mSelected)
@@ -159,11 +198,50 @@ class MenuRow final : public Pressable
     Icons* mIcons = nullptr;
     std::string mIcon;
     std::string mSubtitle;
+    std::string mBadge;
+};
+
+/// A drop-down's closing remark (.input-mode-note): 10.5 px, muted, wrapped, under a rule.
+class MenuNote final : public el::element
+{
+  public:
+    MenuNote(const Theme& theme, std::string text, float width)
+        : mTheme(theme), mText(std::make_shared<Paragraph>(theme, std::move(text), width - 8.0f, 10.5f))
+    {
+        mText->Colour(theme.TextMuted());
+    }
+
+    /// Its height for `width`, before it is laid out: the lines at about 5.6 px a character.
+    [[nodiscard]] static float Estimate(const std::string& text, float width)
+    {
+        const float perLine = std::max(1.0f, std::floor((width - 8.0f) / 5.6f));
+        return 10.0f + std::ceil(static_cast<float>(text.size()) / perLine) * 15.5f;
+    }
+
+    el::view_limits limits(const el::basic_context& ctx) const override
+    {
+        const auto inner = mText->limits(ctx);
+        return {{60.0f, inner.min.y + 10.0f}, {el::full_extent, inner.min.y + 10.0f}};
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        auto& cnv = ctx.canvas;
+        const auto b = ctx.bounds;
+        cnv.fill_style(mTheme.Border());
+        cnv.fill_rect(el::rect{b.left, b.top + 2.0f, b.right, b.top + 3.0f});
+        el::context inner{ctx, mText.get(), el::rect{b.left + 4.0f, b.top + 8.0f, b.right - 4.0f, b.bottom}};
+        mText->draw(inner);
+    }
+
+  private:
+    const Theme& mTheme;
+    std::shared_ptr<Paragraph> mText;
 };
 } // namespace
 
 Ptr Shell::PlacePanel(Ptr panel, el::rect anchor, float width, float height, bool above,
-                      std::function<void()> onOutside)
+                      std::function<void()> onOutside, std::optional<el::rect> passThrough)
 {
     const auto view = ViewSize();
     width = std::min(width, view.x - 16.0f);
@@ -177,10 +255,11 @@ Ptr Shell::PlacePanel(Ptr panel, el::rect anchor, float width, float height, boo
     auto face = Over(std::move(panel), el::share(Surface(mTheme.Bar(), mTheme.ModalRule(), 10.0f)));
     auto placed = Pad(x, y, std::max(0.0f, view.x - x - width), std::max(0.0f, view.y - y - height),
                       FixedWidth(width, FixedHeight(height, Expand(face))));
-    return Over(placed, std::make_shared<ClickCatcher>(std::move(onOutside)));
+    return Over(placed, std::make_shared<ClickCatcher>(std::move(onOutside), passThrough));
 }
 
-void Shell::ShowPopover(Ptr panel, el::rect anchor, float width, float height, bool above)
+void Shell::ShowPopover(Ptr panel, el::rect anchor, float width, float height, bool above,
+                        std::optional<el::rect> passThrough)
 {
     CloseOverlay();
 
@@ -190,7 +269,11 @@ void Shell::ShowPopover(Ptr panel, el::rect anchor, float width, float height, b
         mKeyboard->OpenQuietly();
     }
 
-    mOverlay = KeyLayer(PlacePanel(std::move(panel), anchor, width, height, above, [this] { CloseOverlay(); }));
+    // It fades while a preset dragged out of it is elsewhere (PresetDrag.cpp).
+    *mOverlayAlpha = 1.0f;
+    mOverlay = KeyLayer(std::make_shared<FadeLayer>(
+        mOverlayAlpha,
+        PlacePanel(std::move(panel), anchor, width, height, above, [this] { CloseOverlay(); }, passThrough)));
     mSession.View().add(mOverlay);
 }
 
@@ -207,15 +290,17 @@ void Shell::CloseDropdown()
     RemoveLayer(std::move(dropdown));
 }
 
-void Shell::OpenDropdown(el::rect anchor, std::vector<MenuItem> items, float width)
+void Shell::OpenDropdown(el::rect anchor, std::vector<MenuItem> items, float width, bool above)
 {
-    OpenDropdownColumns(anchor, {std::move(items)}, width);
+    OpenDropdownColumns(anchor, {std::move(items)}, width, above);
 }
 
-void Shell::OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuItem>> columns, float width)
+void Shell::OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuItem>> columns, float width,
+                                bool openAbove)
 {
     std::vector<Ptr> lists;
     float height = 12.0f;
+    std::weak_ptr<MenuRow> chosen; // the row ticked, which the keys start on
 
     for (auto& items : columns)
     {
@@ -224,9 +309,21 @@ void Shell::OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuIte
 
         for (auto& item : items)
         {
-            const bool heading = item.heading || !item.onChoose;
+            if (item.note)
+            {
+                rows.push_back(std::make_shared<MenuNote>(mTheme, item.label, width - 12.0f));
+                columnHeight += MenuNote::Estimate(item.label, width - 12.0f);
+                continue;
+            }
+
+            const bool heading = item.heading || (!item.onChoose && !item.disabled);
             const el::color ink = item.tint != 0 ? Theme::Argb(item.tint) : mTheme.Ink();
             auto row = std::make_shared<MenuRow>(mTheme, item.label, item.selected, heading, ink);
+
+            if (item.selected && !heading && !item.disabled && chosen.expired())
+            {
+                chosen = row;
+            }
 
             if (!item.icon.empty())
             {
@@ -234,7 +331,18 @@ void Shell::OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuIte
             }
 
             row->Subtitle(item.subtitle);
-            auto choose = item.onChoose;
+
+            if (heading)
+            {
+                row->Badge(item.detail);
+            }
+
+            if (item.disabled)
+            {
+                row->Enabled(false);
+            }
+
+            auto choose = item.disabled ? std::function<void()>() : item.onChoose;
             row->onClick = [this, choose] {
                 // Close first: the choice may open another dialog. Only the list closes: a list
                 // opened from a dialog (a filter, a folder) leaves the dialog open.
@@ -262,7 +370,7 @@ void Shell::OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuIte
     }
 
     // Near the bottom of the window (the footer's selects) the list opens upwards.
-    const bool above = anchor.top > ViewSize().y * 0.6f;
+    const bool above = openAbove || anchor.top > ViewSize().y * 0.6f;
     const float maxHeight = above ? anchor.top - 16.0f : ViewSize().y - anchor.bottom - 16.0f;
     const float n = static_cast<float>(columns.size());
     // The panel holds the 6 px padding either side as well, one column or more. Given the
@@ -280,6 +388,26 @@ void Shell::OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuIte
     CloseDropdown();
     mDropdown = KeyLayer(PlacePanel(PadXY(6, 6, list), anchor, width, std::min(height, std::max(120.0f, maxHeight)),
                                     above, [this] { CloseDropdown(); }));
+
+    // A menu, to a screen reader (role=menu).
+    if (auto* router = dynamic_cast<KeyRouter*>(mDropdown.get()))
+    {
+        router->accessKind = KeyRouter::AccessKind::Menu;
+    }
+
     mSession.View().add(mDropdown);
+
+    // Opened from the keys, it starts on the row chosen now (the web's listbox), not the first.
+    if (Focusable::FocusVisible() && !chosen.expired())
+    {
+        mSession.View().post([this, chosen, layer = std::weak_ptr<el::element>(mDropdown)] {
+            const auto row = chosen.lock();
+
+            if (row && layer.lock() == mDropdown)
+            {
+                FocusInView(mSession.View(), *row);
+            }
+        });
+    }
 }
 } // namespace nanoq::ui

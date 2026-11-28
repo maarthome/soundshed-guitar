@@ -1,5 +1,7 @@
 #include "ui/debug/DevDriver.h"
 
+#include "ui/input/KeyRouter.h"
+
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -101,6 +103,14 @@ std::optional<el::key_info> ParseKey(std::string spec)
     else if (spec == "menu")
     {
         code = el::key_code::menu;
+    }
+    else if (spec == "equal")
+    {
+        code = el::key_code::equal;
+    }
+    else if (spec == "minus")
+    {
+        code = el::key_code::minus;
     }
     else if (spec.size() == 1 && spec[0] >= '0' && spec[0] <= '9')
     {
@@ -261,6 +271,44 @@ bool DevDriver::Play(el::view& view, const std::string& line)
         return true;
     }
 
+    if (line.rfind("unnamed ", 0) == 0)
+    {
+        // Every control a screen reader would hear with no name (Focus.h): an icon button with
+        // no AccessName, a field with no label.
+        std::ofstream out(line.substr(8), std::ios::app);
+        int checked = 0;
+
+        if (auto* router = KeyRouter::Focused(view))
+        {
+            const bool visible = Focusable::FocusVisible();
+            Focusable::SetFocusVisible(true);
+            view.in_context_do(*router, [&](const el::context& ctx) {
+                el::context sctx{ctx, &router->subject(), ctx.bounds};
+                router->prepare_subject(sctx);
+
+                for (const auto& t : CollectFocusTargets(sctx, router->subject(), true))
+                {
+                    if (t.isStatic)
+                    {
+                        continue;
+                    }
+
+                    ++checked;
+
+                    if (const auto info = DescribeTarget(t); info.name.empty())
+                    {
+                        out << t.key << " value=" << info.value << " at " << t.bounds.left << "," << t.bounds.top
+                            << "\n";
+                    }
+                }
+            });
+            Focusable::SetFocusVisible(visible);
+        }
+
+        out << "checked " << checked << "\n";
+        return true;
+    }
+
     if (line.rfind("shot ", 0) == 0)
     {
         // Drawn offscreen, so it works while the window is hidden or the session is locked
@@ -333,6 +381,21 @@ bool DevDriver::Play(el::view& view, const std::string& line)
         }
 
         view.click(button(false, 1, el::mouse_button::left, x2, y2));
+    }
+    // A drag in steps, each its own line, so the window draws between them (a drop target that
+    // has to be drawn first, as PresetDrag.h's are): press, dragto as often as wanted, release.
+    else if (verb == "press")
+    {
+        view.cursor(el::point{x, y}, el::cursor_tracking::hovering);
+        view.click(button(true, 1, el::mouse_button::left, x, y));
+    }
+    else if (verb == "dragto")
+    {
+        view.drag(button(true, 1, el::mouse_button::left, x, y));
+    }
+    else if (verb == "release")
+    {
+        view.click(button(false, 1, el::mouse_button::left, x, y));
     }
     else if (verb == "scroll")
     {

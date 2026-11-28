@@ -29,16 +29,21 @@
 #include "ui/effects/MultibandPlot.h"
 #include "ui/effects/ResponsePlot.h"
 #include "ui/chain/EffectRows.h"
+#include "ui/presets/PresetDrag.h"
 #include "ui/shell/FrameWidgets.h"
 #include "ui/widgets/Buttons.h"
 #include "ui/widgets/Panels.h"
 #include "ui/UiSession.h"
 #include "ui/widgets/Widgets.h"
+#include "uiclient/Automation.h"
+#include "uiclient/LibraryManager.h"
 #include "uiclient/ChainDropRules.h"
 #include "uiclient/ChainHistory.h"
 #include "uiclient/ChainLayout.h"
 #include "uiclient/DspDiagnostics.h"
 #include "uiclient/DspStatus.h"
+#include "uiclient/FxLibrary.h"
+#include "uiclient/PresetInspect.h"
 #include "uiclient/SignalFlow.h"
 #include "uiclient/UpdateCheck.h"
 #include "uiclient/EffectPresentation.h"
@@ -48,6 +53,7 @@
 #include "uiclient/PresetTrail.h"
 #include "uiclient/ScaleGuide.h"
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -78,7 +84,9 @@ struct MenuItem
     std::string detail; // muted, at the right
     std::string icon;   // an icon name (images/icons), drawn at the left in `tint`
     std::uint32_t tint = 0;
-    std::string subtitle; // a second, muted line under the label (a drop-down's description)
+    std::string subtitle;  // a second, muted line under the label (a drop-down's description)
+    bool disabled = false; // listed, greyed and not chosen (a drop-down's mode that cannot be had)
+    bool note = false;     // a drop-down's closing remark: `label` wrapped, muted, over a rule
 };
 
 /// What a dialog holds, for Shell::ShowDialog: the web UI's modal, with its title and a close
@@ -100,6 +108,8 @@ struct DialogParts
     float padY = 18.0f;
     /// What the close cross does, when it is more than closing (Cancel undoing a preview).
     std::function<void()> onClose;
+    /// What a screen reader says the dialog is about, after its title (a confirm's question).
+    std::string description;
     /// The body takes the dialog's whole height (a list that scrolls in itself), rather than
     /// sitting at its top.
     bool stretch = false;
@@ -114,6 +124,8 @@ struct SectionNav
         std::string label;
         bool active = false;
         std::function<void()> onClick;
+        std::string count; // drawn small at the row's right (Your Presets' folder sizes)
+        int depth = 0;     // a nested folder, stepped in
     };
 
     std::string account; // the account pill's label; empty for none
@@ -123,15 +135,19 @@ struct SectionNav
     std::vector<Ptr> compactTools;  // at the right of the chips, at the compact size
     float compactToolsWidth = 0.0f; // their widths together, to tell whether the chips still fit
     std::string help;               // a help card under the side list
+    float top = 24.0f;              // the side list's space above its first row
+    bool scrollItems = false;       // the rows scroll in the column (a long list)
 };
 
 class WebViewSlot;    // JamPage.cpp
 class ScaleNeck;      // ScaleGuideDraw.h
 class ChordWheelView; // ScaleGuideDraw.h
+class TonePill;       // ScaleGuideDraw.h
 class RunTabView;
 class ProgressionTabView;
-class NodeCard;  // NodeCard.h
-class Connector; // ChainWires.h
+class NodeCard;               // NodeCard.h
+struct ResourceBrowserMemory; // ResourceBrowser.cpp
+class Connector;              // ChainWires.h
 
 namespace chain
 {
@@ -197,6 +213,9 @@ class Shell
     [[nodiscard]] bool WantsWide() const;
     /// The compact frame's stage is tall enough for the chain over the editor (kCompactSplitMinHeight).
     [[nodiscard]] bool WantsSplit() const;
+    /// The compact frame stacks its bars (a tab bar over the preset bar, no rail) in a window as
+    /// tall as it is wide or taller, as the web UI's portrait layout.
+    [[nodiscard]] bool WantsStack() const;
     /// Hit areas for a finger (metrics::Touch): the ui.touchControls setting, whose Auto follows
     /// TouchFirst().
     [[nodiscard]] bool TouchSizes() const;
@@ -211,7 +230,7 @@ class Shell
     /// Where the stage starts and how wide it is: right of the rail when compact.
     [[nodiscard]] float StageLeft() const
     {
-        return mWide ? 0.0f : metrics::kRailWidth;
+        return mWide || mStack ? 0.0f : metrics::kRailWidth;
     }
 
     [[nodiscard]] float StageWidth() const
@@ -219,16 +238,26 @@ class Shell
         return ViewSize().x - StageLeft();
     }
 
-    [[nodiscard]] float LooperStripHeight() const
+    /// The looper strip's row of controls.
+    [[nodiscard]] float LooperRowHeight() const
     {
         return mWide ? metrics::kWideLooperStripHeight : metrics::kLooperStripHeight;
+    }
+
+    /// The looper's Layers panel under its row, while it is open (LooperStrip.cpp).
+    [[nodiscard]] float LooperLayersHeight() const;
+
+    [[nodiscard]] float LooperStripHeight() const
+    {
+        return LooperRowHeight() + (mLooperLayersOpen ? LooperLayersHeight() : 0.0f);
     }
 
     /// The page slot's height: the view less the frame's bars, and the looper strip when it is out.
     [[nodiscard]] float StageHeight() const
     {
-        const float bars = mWide ? metrics::kTabBarHeight + 1.0f + metrics::HeaderHeight() + metrics::kWideFooterHeight
-                                 : metrics::TopBarHeight() + metrics::FooterHeight();
+        const float bars =
+            mWide ? metrics::kTabBarHeight + 1.0f + WideHeaderHeight() + metrics::kWideFooterHeight
+                  : metrics::TopBarHeight() + metrics::FooterHeight() + (mStack ? metrics::kStackTabBarHeight : 0.0f);
         return ViewSize().y - bars - (mLooperOpen ? LooperStripHeight() : 0.0f);
     }
 
@@ -252,9 +281,17 @@ class Shell
     Ptr EmptyState(const std::string& title, const std::string& hint, float height = 0.0f);
 
     /// The row under the split stage's chain that holds its round add button.
-    [[nodiscard]] static float AddRowHeight()
+    [[nodiscard]] float AddRowHeight() const
     {
-        return metrics::Touch() ? 46.0f : 30.0f;
+        // Touch sizes in a compact split: the + is in the scene row (AddInSceneRow), so no row.
+        return AddInSceneRow() ? 0.0f : metrics::Touch() ? 46.0f : 30.0f;
+    }
+
+    /// The compact split with touch sizes puts the chain's + at the end of the scene row, hit
+    /// over 44 px, as the web UI does, and gives the chain the row it had.
+    [[nodiscard]] bool AddInSceneRow() const
+    {
+        return metrics::Touch() && mSplit && !mWide;
     }
 
     /// The frame for the layout in force, around the region slots.
@@ -289,6 +326,7 @@ class Shell
     // ThemeFlyout.cpp: the footer's Theme button, its flyout (the zoom, and a tile per theme), and
     // the zoom, kept in uiSettings.native.zoom.
     /// The footer's Theme button, in either frame: it opens the flyout.
+    [[nodiscard]] Ptr BuildStackTabs();
     [[nodiscard]] std::shared_ptr<IconButton> BuildThemeButton();
     void ToggleThemeFlyout(el::rect anchor);
     void OpenThemeFlyout(el::rect anchor);
@@ -298,14 +336,22 @@ class Shell
     [[nodiscard]] float CurrentZoom() const;
     /// A zoom chosen in the UI: applied and stored.
     void SetZoom(float zoom);
+    /// The next zoom stop up (1) or down (-1) from the zoom in force, or 100% (0).
+    void StepZoom(int direction);
     /// Puts `zoom` on the view, and places what is open (the flyout, the Options sheet) again.
     void ApplyZoom(float zoom);
     /// Each tick: a stored zoom the view has not applied yet is applied, and one the host changed
     /// (QPlug's zoom keys) is stored.
     void SyncZoom();
-    /// Back to the web UI, where Soundshed Guitar hosts this UI (environment.nativeEditor); null
-    /// anywhere else.
-    [[nodiscard]] std::shared_ptr<IconButton> BuildStandardUiButton();
+    /// The flyout's App UI choice, where Soundshed Guitar hosts this UI and can draw itself with
+    /// either (environment.nativeEditor): this one, or the web UI. Null anywhere else.
+    /// `height` is set to how tall it is.
+    [[nodiscard]] Ptr BuildAppUiChoice(float& height);
+    /// Once, the first time this UI opens in Soundshed Guitar: it is a beta, and bugs are wanted.
+    void ShowNativeUiBetaNoticeOnce();
+    /// With a screen reader that cannot read this UI (AccessBridge::UnservedScreenReader), offers
+    /// the standard (web) UI, which it can, once a session. Returns whether it asked.
+    bool OfferStandardUiForScreenReader();
     /// Touch sizes' Auto, On or Off, in a drop-down (the Options popover, ShellFrame.cpp).
     [[nodiscard]] std::shared_ptr<IconButton> TouchControlsButton();
 
@@ -336,23 +382,32 @@ class Shell
         Ptr levelling; // input levelling, under the input meter
     };
 
-    /// `cellWidth`: each knob's cell, narrowed where the compact strip has less room (640 wide).
-    ControlCells BuildControlCells(float cellWidth = 84.0f);
-    /// A small panel beside `anchor` (a control's bounds), closed by a tap anywhere else.
-    void ShowPopover(Ptr panel, el::rect anchor, float width, float height, bool above = false);
-    /// The panel placed beside `anchor`, over a layer that calls `onOutside` when tapped.
+    /// `cellWidth`: each knob's cell, narrowed where the compact strip has less room (640 wide);
+    /// 0 for the web UI's control bar, where each stack is as wide as its own (.control-stack).
+    ControlCells BuildControlCells(float cellWidth = 0.0f);
+    /// A small panel beside `anchor` (a control's bounds), closed by a tap anywhere else but
+    /// `passThrough`, where a tap reaches what is under it and the panel stays.
+    void ShowPopover(Ptr panel, el::rect anchor, float width, float height, bool above = false,
+                     std::optional<el::rect> passThrough = std::nullopt);
+    /// The panel placed beside `anchor`, over a layer that calls `onOutside` when tapped (but in
+    /// `passThrough`, which it leaves to what is under it).
     [[nodiscard]] Ptr PlacePanel(Ptr panel, el::rect anchor, float width, float height, bool above,
-                                 std::function<void()> onOutside);
+                                 std::function<void()> onOutside, std::optional<el::rect> passThrough = std::nullopt);
     void CloseDropdown();
     /// A drop-down list under `anchor`, as the web UI's menus open from their buttons.
-    void OpenDropdown(el::rect anchor, std::vector<MenuItem> items, float width = 180.0f);
+    /// `above`: open upwards (else upwards only near the window's foot).
+    void OpenDropdown(el::rect anchor, std::vector<MenuItem> items, float width = 180.0f, bool above = false);
     /// A drop-down whose options sit in columns side by side, each `width` wide (the web UI's
     /// multi-column metro-select, for the meters).
-    void OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuItem>> columns, float width);
+    void OpenDropdownColumns(el::rect anchor, std::vector<std::vector<MenuItem>> columns, float width,
+                             bool above = false);
     void OpenOptions(el::rect anchor);
     void OpenNewPresetMenu(el::rect anchor);
     /// "New preset" for a menu: it asks first if the preset has unsaved changes.
-    [[nodiscard]] MenuItem NewPresetItem();
+    /// New: an empty preset or the basic signal chain (the web's New menu), asking first when
+    /// the preset shown has unsaved changes.
+    [[nodiscard]] MenuItem NewPresetItem(const std::string& label = "New preset",
+                                         const std::string& configuration = "basic");
     void LoadRandomPreset();
 
     // The chain's undo/redo and A/B (ShellFrame.cpp), as the web UI's footer (history.ts).
@@ -375,6 +430,19 @@ class Shell
     /// Whether the full layout's chain is drawn as icon tiles: the bar under it dragged up
     /// past the cards' height, as the web UI's splitter does (signalPath/layout.ts).
     [[nodiscard]] bool IconChain() const;
+    /// The full layout's control bar, or the play stage's chain, folded to a labelled chevron
+    /// (the web UI's control-bar and signal-path collapse; kept in Nano Q's own UI settings).
+    [[nodiscard]] bool ControlsCollapsed() const;
+    [[nodiscard]] bool ChainCollapsed() const;
+    void SetControlsCollapsed(bool collapsed);
+    void SetChainCollapsed(bool collapsed);
+
+    /// The full layout's control bar's height: folded, only its chevron's row.
+    [[nodiscard]] float WideHeaderHeight() const
+    {
+        return ControlsCollapsed() ? metrics::kCollapsedBarHeight : metrics::HeaderHeight();
+    }
+
     [[nodiscard]] std::string ChainSignature() const;
     /// Files dragged in from the desktop (ChainStrip.cpp): a .nam model or a .wav IR held over
     /// an effect that plays one lights its card; dropped, it joins the library where it is and
@@ -390,7 +458,16 @@ class Shell
     [[nodiscard]] guitarfx::uiclient::NodeDropTarget DropTargetAt(el::point to, const std::string& except);
     /// An effect dragged out of the FX Library: lights where it would land, and adds it there when
     /// let go.
-    void DragLibraryEffect(const std::string& type, const std::string& name, el::point to, bool done);
+    void DragLibraryEffect(const guitarfx::uiclient::FxLibraryItem& item, el::point to, bool done);
+
+    // PresetDrag.cpp: dragging in the preset library (PresetDrag.h).
+    /// What is dragged follows the pointer, the place it would land is lit, and on `done` it lands.
+    void DragLibraryItem(const LibraryDrag& item, el::point to, bool done);
+    /// `subject` wrapped so a library drag can land on it (`spot` says how).
+    [[nodiscard]] Ptr DropTarget(DropSpot spot, Ptr subject);
+    /// `subject` wrapped so it can be dragged as `item`.
+    [[nodiscard]] Ptr LibraryDragSource(LibraryDrag item, Ptr subject);
+
     /// The round + over the chain: Add FX... (the FX Library) or Add Scene.
     void OpenAddMenu(el::rect anchor);
 
@@ -405,13 +482,17 @@ class Shell
     Ptr BuildEffectPage();
     void SyncEffectValues();
     void OpenEffectPresets();
-    void OpenEnumPicker(const std::string& nodeId, const guitarfx::uiclient::EffectParamInfo& info);
+    /// An enum's flyout (EnumPicker.cpp): search, its groups as tiles, its choices; hung from `anchor`.
+    void OpenEnumPicker(const std::string& nodeId, const guitarfx::uiclient::EffectParamInfo& info, el::rect anchor);
     [[nodiscard]] Ptr BuildResourceSlot(const guitarfx::GraphNode& node, const std::string& resourceType,
                                         int resourceIndex, const std::string& label, bool optional,
-                                        bool stacked = false);
+                                        bool stacked = false, bool allowBrowse = true);
     [[nodiscard]] Ptr BuildSplitBranches(const guitarfx::GraphNode& splitter);
     /// A third-party plugin node's list, Open Plugin and Browse (NodeControls.cpp).
     [[nodiscard]] Ptr BuildPluginHost(const guitarfx::GraphNode& node);
+    [[nodiscard]] float PluginHostHeight(const guitarfx::GraphNode& node) const;
+    /// Why the node's plugin did not load, while it is still the one picked; empty otherwise.
+    [[nodiscard]] std::string PluginLoadFailureText(const guitarfx::GraphNode& node) const;
     /// A blend node's blend and its mode (NodeControls.cpp).
     [[nodiscard]] Ptr BuildBlendInfo(const guitarfx::GraphNode& node);
     /// The IR Cabinet's IR list between its slots (NodeControls.cpp).
@@ -419,13 +500,28 @@ class Shell
 
     // EffectLayoutPage.cpp: an effect drawn with its custom layout (the web UI's layoutRenderer.ts).
     /// The layout as one element `width` wide at most, its drawn height in `height`. A backdrop
-    /// layout carries `defaultControls`, the standard controls laid out `controlsSize` big.
+    /// layout carries `defaultControls`, the standard controls laid out `controlsSize` big and
+    /// drawn at the layout's scale times `controlsFit` (under 1 when they shrink into their area).
     [[nodiscard]] Ptr BuildEffectLayout(const guitarfx::GraphNode& node, const guitarfx::uiclient::EffectLayout& layout,
                                         float width, float availableHeight, Ptr defaultControls,
-                                        el::extent controlsSize, float& height);
+                                        el::extent controlsSize, float& height, float controlsFit = 1.0f);
     /// The header's chooser between the standard controls and the layouts the effect can wear,
     /// or null when it has none to choose; `width` is what it takes.
     [[nodiscard]] Ptr BuildLayoutChooser(const guitarfx::GraphNode& node, bool usingLayout, float& width);
+
+    /// The web's Effect layout picker (layoutPicker.ts): the layout, how widely it sticks (this
+    /// effect, this preset, or a make or model keyword), and the rules saved for the effect.
+    struct LayoutPickerDraft
+    {
+        std::string nodeId;
+        bool rulesTab = false;
+        std::string layoutId; // empty: the one in use
+        std::string scope = "effectType";
+        std::string keyword;
+        bool keywordTyped = false; // the keyword was chosen, so a reopen keeps it
+    };
+
+    void OpenLayoutPicker(LayoutPickerDraft draft);
 
     // EqPlot.cpp: the EQ curves, in the effect editor and the Global EQ dialog.
     struct EqPlotSource
@@ -506,8 +602,9 @@ class Shell
     // UI's settings/audioDevice.ts). SyncDevicePage runs every tick: the level lease, and a redraw
     // when a new device snapshot arrives. The meter is bound (mLive).
     struct DevicePage;
-    [[nodiscard]] Ptr BuildDeviceSection();
-    [[nodiscard]] Ptr BuildDeviceContent();
+    /// The audio device card's rows, or (`midi`) the MIDI Devices card's.
+    [[nodiscard]] Ptr BuildDeviceSection(bool midi = false);
+    [[nodiscard]] Ptr BuildDeviceContent(bool midi);
     void SyncDevicePage();
     void DeviceRequest(const std::string& action, nlohmann::json args = nlohmann::json::object());
     std::shared_ptr<DevicePage> mDevicePage;
@@ -517,7 +614,7 @@ class Shell
     [[nodiscard]] std::string TonePreviewSignature() const;
     void OpenToneLink(const guitarfx::uiclient::tones::LinkTarget& target);
     void ShowPackDetail(const guitarfx::uiclient::tones::PackDetail& detail);
-    Ptr mTonePreviewBar;
+    Ptr mTonePreviewBar; // shown in mPreviewBarSlot
     std::string mTonePreviewBarShown;
     bool mToneLinkTaken = false;
     std::optional<guitarfx::uiclient::tones::PackDetail> mPackDetail; // the pack view last shown,
@@ -526,10 +623,12 @@ class Shell
     std::optional<guitarfx::uiclient::tones::Tone> mTonesShared;      // the tone a link opened the page on
     // Automation.cpp: MIDI and automation, as the web UI's midiLearnMenu.ts and automationPanel.ts.
     /// A control's right-click MIDI Learn menu, for the address it drives.
-    void OpenMidiLearnMenu(const std::string& address, const std::string& label, el::point at);
-    /// The same, for an effect parameter (nothing for one a mapping cannot reach), and for the
-    /// global input and output knobs ("input", "output").
-    void OpenNodeParamMidiMenu(const std::string& nodeType, const std::string& paramKey, el::point at);
+    void OpenMidiLearnMenu(const guitarfx::uiclient::MidiLearnTarget& target, el::point at);
+    /// The same, for one node's parameter (nothing for one a mapping cannot reach), for its on/off
+    /// (its card's power, its panel's switch), and for the global input and output knobs
+    /// ("input", "output").
+    void OpenNodeParamMidiMenu(const guitarfx::GraphNode& node, const std::string& paramKey, el::point at);
+    void OpenNodeBypassMidiMenu(const guitarfx::GraphNode& node, el::point at);
     void OpenGlobalKnobMidiMenu(const std::string& knob, el::point at);
     /// The MIDI & Automation dialog: Mappings, Keyboard and MIDI Log.
     void OpenMidiAutomation();
@@ -575,6 +674,8 @@ class Shell
     std::vector<std::weak_ptr<el::element>> mPickupDesignPills;
     /// The graphic EQ's sliders over its curve (GraphicEq.cpp), `width` wide; `height` is what it takes.
     [[nodiscard]] Ptr BuildGraphicEq(const guitarfx::GraphNode& node, float width, float& height);
+    /// The width the graphic EQ's bands stand in one row at their narrowest.
+    [[nodiscard]] static float GraphicEqNaturalWidth(const guitarfx::GraphNode& node);
     /// What the EQ sections' layout depends on (the graphic EQ's bands, Pickup Match's custom
     /// sides), for EffectPageSignature.
     [[nodiscard]] std::string EqSectionSignature(const guitarfx::GraphNode& node) const;
@@ -618,6 +719,18 @@ class Shell
     void SyncUpdateCheck();
     [[nodiscard]] Ptr BuildUpdateButton();
     void OpenUpdateDialog();
+    /// The banner over every Settings section while an update waits; null when none does.
+    [[nodiscard]] Ptr BuildUpdateBanner(float width);
+
+    // Tone3000Key.cpp: the player's own Tone3000 key, for when the relay is off. `required`: the
+    // web UI's "Tone3000 API Key Required" over a shared preset's install, with Cancel Import and
+    // Open Settings; else Settings' Save. A key is kept only once Tone3000 takes it.
+    void OpenTone3000KeyDialog(bool required, std::function<void()> proceed = {}, std::function<void()> cancel = {});
+    /// The relay's health as Settings shows it, and whether a check is under way.
+    std::string mTone3000Health = "API health: not checked.";
+    bool mTone3000HealthChecking = false;
+    // The effect panel's picture the Settings page was built with (Settings > User Interface).
+    std::string mSettingsPanelBackground;
     bool mUpdateChecked = false;
     double mUpdateCheckAt = 0.0;
     std::optional<guitarfx::uiclient::AvailableUpdate> mUpdate;
@@ -644,7 +757,9 @@ class Shell
 
     // PadsView.cpp
     [[nodiscard]] Ptr BuildPadsView();
-    void AssignSetlistPad(int index); // puts the preset playing on a pad of the active setlist
+    /// Puts a preset (`presetId`, else the one playing) on a pad of the active setlist, asking
+    /// before it replaces another.
+    void AssignSetlistPad(int index, const std::string& presetId = {});
     void ClearSetlistPad(int index);
     void LeavePads(); // the pads give way to the editor: refill it, and unlight the footer's pads button
 
@@ -666,10 +781,22 @@ class Shell
     void SelectPresetBrowserFolder(const std::string& folderId);
     [[nodiscard]] Ptr BuildFolderColumn();
     [[nodiscard]] Ptr BuildSetlistsView(Ptr tabs);
+
+    /// How a prompt asks, as the web UI's showPrompt.
+    struct PromptOptions
+    {
+        std::string message;              // a line or two above the field, saying what to enter
+        std::string placeholder = "Name"; // what the empty field reads
+        bool multiline = false;           // several lines, in a box where Enter starts a new one
+        bool allowEmpty = false;          // OK with nothing entered gives ""; otherwise it says so
+    };
+
     /// A menu or prompt opened from another menu's item, once that menu has closed.
     void PostMenu(const std::string& title, std::vector<MenuItem> items);
     void PostPrompt(const std::string& title, const std::string& initial, const std::string& confirmLabel,
                     std::function<void(const std::string&)> onSubmit);
+    void PostPrompt(const std::string& title, const std::string& initial, const std::string& confirmLabel,
+                    PromptOptions options, std::function<void(const std::string&)> onSubmit);
 
     // TonesPage.cpp: tone sharing, as the web UI's Tones tab
     enum class TonesTab
@@ -679,7 +806,37 @@ class Shell
         Installed,
         Mine // My Content: the account's own presets and packs
     };
+    /// The Tones tab's three sections, as the web UI's (tonesPanel/tabs.ts): Community Presets
+    /// (tone sharing, the sections above), Your Presets and Tone 3000. Community follows the
+    /// Tone Sharing feature and Tone 3000 its own; Your Presets is always there.
+    enum class TonesSection
+    {
+        Community,
+        Local,
+        Tone3000
+    };
     Ptr BuildTonesPage();
+    [[nodiscard]] bool TonesSectionOn(TonesSection section) const;
+    /// The section to show for `wanted`: itself if it is on, else the first that is.
+    [[nodiscard]] TonesSection ResolveTonesSection(TonesSection wanted) const;
+    /// Opens the Tones page on Community Presets' `tab` (a link to tone sharing).
+    void OpenTonesCommunity(TonesTab tab);
+    Ptr BuildTonesCommunity();
+    // TonesLocal.cpp: Your Presets, the presets on this machine as a grid of cards with the folders
+    // down the side (tonesPanel/localPresets.ts).
+    Ptr BuildTonesLocal();
+    [[nodiscard]] std::string TonesLocalSignature() const;
+    void RefillTonesLocalGrid();
+    // TonesTone3000.cpp: the Tone 3000 browser (tone3000Browser.ts, tones-tone3000.html).
+    Ptr BuildTonesTone3000();
+    [[nodiscard]] std::string TonesTone3000Signature() const;
+    /// Shows page `page` of the open category's results (or the favourites): from the hour's
+    /// cache unless `refresh`, else from Tone3000.
+    void BrowseTone3000(int page, bool refresh);
+    /// Imports every model of a tone into the library (the card's Import).
+    void ImportTone3000Tone(const guitarfx::uiclient::tone3000::Tone& tone);
+    /// The tone's details and its models, with Select All / None and Import Selected.
+    void OpenTone3000Details(const guitarfx::uiclient::tone3000::Tone& tone);
     // SectionNav.cpp
     [[nodiscard]] Ptr WithSectionNav(SectionNav nav, Ptr content);
     /// Says where publishing is (Soundshed Guitar), with a way to My Content.
@@ -687,7 +844,13 @@ class Shell
     [[nodiscard]] std::string TonesPageSignature() const;
     /// Asks the service for the open tab's tones: page 1 afresh, or with `more` the next page.
     void LoadTones(bool more);
+    /// The web's Account dialog: signed out, the email and the emailed code; signed in, the
+    /// profile (creator name and bio) and Sign Out.
     void OpenToneAccount(el::rect anchor);
+    /// A search typed into the Presets search runs this long after the last key (the web's 250 ms).
+    void TickToneSearch();
+    /// Deletes the account's own preset or pack from tone sharing, once confirmed (My Content).
+    void DeleteMyTone(const guitarfx::uiclient::tones::Tone& tone);
     void OpenPackDetail(const guitarfx::uiclient::tones::Tone& pack);
     void ShareTone(const guitarfx::uiclient::tones::Tone& tone);
     [[nodiscard]] std::shared_ptr<artist::image> RemoteImage(const std::string& url);
@@ -712,9 +875,17 @@ class Shell
     [[nodiscard]] Ptr BuildPracticeTool(float width);
     [[nodiscard]] std::string PracticeToolSignature() const;
     void OpenPracticeProjects(el::rect anchor);
-    void OpenPracticeLoopMenu(const std::string& loopId, el::rect anchor);
+    /// The song sections a loop being named can take (the web's name datalist).
+    void OpenPracticeLoopNames(el::rect anchor);
     void OpenPracticeEq();
-    void AddPracticeLink(const std::string& projectId);
+    /// Save in the project bar: under the typed name, asking first over a project of that name.
+    void SavePracticeProject();
+    void DeletePracticeProject();
+    /// A loop's row opened for its name and times; `focus` puts the keys in its name.
+    void EditPracticeLoop(const std::string& loopId, bool focus);
+    /// The open row's name and times kept (or dropped), and the row closed.
+    void CommitPracticeLoopEdit(bool keep);
+    void AddPracticeLinkInline();
     /// An audio file dropped on the Practice Tool loads as its track.
     bool DropPracticeTrack(const std::vector<std::string>& paths);
     [[nodiscard]] Ptr BuildBackingTracks(float width);
@@ -726,6 +897,19 @@ class Shell
     void ChangeScaleGuide(const std::function<void(guitarfx::uiclient::scaleguide::Settings&)>& edit);
     /// Steps a progression, the next chord led from the shape showing (or `fromFrets`).
     void ScaleGuideStep(int index, std::vector<int> fromFrets = {});
+    /// Left or Right on the page: a progression showing steps back or on (the web's arrow keys).
+    bool ScaleGuideArrow(bool forward);
+    /// The progression being written (the web's draft): shown in place of the chosen one until it
+    /// is saved or dropped. An empty id is a new one.
+    std::optional<guitarfx::uiclient::scaleguide::UserProgression> mScaleGuideDraft;
+    std::shared_ptr<el::basic_input_box> mScaleGuideDraftName;
+    Ptr mScaleGuideDraftNameField;
+    int mScaleGuideDraftDegree = 0;
+    std::string mScaleGuideDraftQuality = "maj";
+    [[nodiscard]] Ptr BuildScaleGuideEditor();
+    void StartScaleGuideDraft(guitarfx::uiclient::scaleguide::UserProgression draft);
+    std::vector<std::weak_ptr<TonePill>> mScaleGuidePills; // the formula, lit by LISTEN
+    /// How LISTEN's readout reads: "idle", "in", "out" or "clean" (the web's sg-live states).
     /// Every tick: LISTEN on while the guide shows (it has no switch), and the readings it brings.
     void SyncScaleGuideListen();
     // What LISTEN heard whatever the guide shows (the engine's `heard`): the summary's Heard column,
@@ -774,7 +958,7 @@ class Shell
     bool mJamWebViewUnavailable = false;
     bool mJamPlayerAudible = false; // the player was making sound at the last tick
     std::weak_ptr<WebViewSlot> mJamPlayerSlot;
-    Ptr mJamPlayerBar;
+    Ptr mJamPlayerBar; // shown in mJamBarSlot
     std::string mJamPlayerBarShown;
     void RunJamSearch();
     void ToggleJamFavorite(const guitarfx::uiclient::jam::Video& video);
@@ -790,6 +974,15 @@ class Shell
     Ptr mJamSearchElement;
     std::weak_ptr<el::port_base> mJamScroll; // where the open section is scrolled to
     std::unique_ptr<guitarfx::uiclient::PracticeTool> mPractice;
+    // The Practice Tool's fields, kept over the section's rebuilds as the web's inputs are.
+    std::shared_ptr<el::basic_input_box> mPracticeNameBox, mPracticeLoopName, mPracticeLoopStart, mPracticeLoopEnd,
+        mPracticeLinkTitle, mPracticeLinkUrl;
+    Ptr mPracticeNameField, mPracticeLoopNameField, mPracticeLoopStartField, mPracticeLoopEndField,
+        mPracticeLinkTitleField, mPracticeLinkUrlField;
+    std::string mPracticeNameFor = "-"; // the project the name box shows
+    bool mPracticeIncludePreset = false;
+    std::string mPracticeEditingLoop;
+    bool mPracticeFocusLoopName = false; // the edited loop's name takes the focus once built
     std::string mJamSignature;
     double mPracticeDeletedAt = 0.0; // when the loop shown in the undo banner was deleted
 
@@ -797,10 +990,34 @@ class Shell
     void OpenResourceBrowser(const std::string& nodeId, const std::string& resourceType, int resourceIndex,
                              std::function<void(const std::string& resourceId)> onPick = {},
                              const std::string& title = {}, const std::string& category = {});
+    /// A model or IR slot's previous and next (ResourceBrowser.cpp): through the list it was last
+    /// picked from, the library as its browser filters it, the folder, or the Tone3000 results
+    /// (importing as it goes, and stopping at their ends), as the web UI's resource arrows.
+    void StepSlotResource(const std::string& nodeId, const std::string& resourceType, int resourceIndex, int delta);
+    [[nodiscard]] bool CanStepSlotResource(const std::string& nodeId, const std::string& resourceType,
+                                           int resourceIndex, int delta);
+    /// What each slot's browser keeps between opens, by slot (the web UI's persistedStateBySlot).
+    std::map<std::string, std::shared_ptr<ResourceBrowserMemory>> mResourceBrowserMemory;
     /// A library row's menu: details, rename, recategorise, copy the path, delete.
     void OpenLibraryResourceMenu(const std::string& resourceType, const std::string& resourceId, el::rect anchor);
+    /// A library row's details under it (libraryDetails.ts): its Tone3000 card, a way to its
+    /// tone (`onOpenTone`, when given), its description, id, file, tags and metadata.
+    [[nodiscard]] Ptr LibraryDetailsPanel(const std::string& resourceType, const std::string& resourceId, float width,
+                                          std::function<void()> onOpenTone);
     /// A library entry's name, category and tags (the web UI's row edit dialog).
     void EditLibraryResource(const std::string& resourceType, const std::string& resourceId, el::rect anchor);
+    /// The Edit resource popover over `anchor`: name, category (an IR's offering cab and reverb) and
+    /// tags, as given; Save hands back what was typed, trimmed, the tags split on commas.
+    void OpenResourceEditor(
+        el::rect anchor, const std::string& resourceType, const std::string& name, const std::string& category,
+        const std::vector<std::string>& tags,
+        std::function<void(std::string name, std::string category, std::vector<std::string> tags)> onSave);
+    /// A Folder tab file's details under its row (renderFolderFileDetails): the Tone3000 card for
+    /// the tone it matched (`tone`, may be null), its path, size and metadata.
+    [[nodiscard]] Ptr FolderFileDetailsPanel(const guitarfx::uiclient::ResourceFolderListing::File& file,
+                                             const nlohmann::json* tone, float width);
+    /// The Tone3000 card (tone3000Card.ts) for a tone's metadata, added to a details column.
+    void AppendToneCard(std::vector<Ptr>& column, const nlohmann::json& metadata, float inner);
     /// Asks before deleting a library entry; one in use is refused, saying where.
     void ConfirmDeleteLibraryResource(const std::string& resourceType, const std::string& resourceId, el::rect anchor);
     /// A one-line prompt on the drop-down layer, so it stacks over a dialog.
@@ -814,6 +1031,7 @@ class Shell
         Audio,
         Dsp,
         Ui,
+        Library, // while Blend Tools is on (LibrarySection.cpp)
         Help
     };
     SettingsSection mSettingsSection = SettingsSection::General; // the section Settings shows
@@ -823,6 +1041,27 @@ class Shell
     /// A row of tabs inside a section; `tab` is the one shown, and a click shows another.
     [[nodiscard]] Ptr BuildSettingsTabs(std::initializer_list<const char*> labels, int& tab);
 
+    // LibrarySection.cpp: Settings > Library's Resource Library manager, as the web UI's.
+    struct LibraryManagerUi
+    {
+        guitarfx::uiclient::library_manager::Filter filter;
+        std::shared_ptr<el::basic_input_box> searchBox; // kept, with its focus, across rebuilds
+        Ptr searchElement;
+        SlotPtr results; // refilled alone by the search and the library's changes
+        float textWidth = 600.0f;
+        std::string cleanupScope = "all";
+        bool moreFilters = false;
+        std::size_t shownRows = 60;
+        bool refillPosted = false;
+    };
+
+    LibraryManagerUi mLibraryManager;
+    [[nodiscard]] Ptr BuildLibrarySection(float textWidth);
+    [[nodiscard]] Ptr BuildLibraryResults(float textWidth);
+    /// The library or what uses it changed: the results again, once per burst.
+    void RefreshLibraryResults();
+    bool mSettingsLibraryShown = false; // whether the Settings page was built with Library listed
+
     // DspPerformance.cpp: Settings → DSP Performance's live figures (the web UI's views.ts and
     // dspNodeTable.ts): the load over the tabs, and the Diagnostics tab's levels, load history and
     // per-node table.
@@ -830,6 +1069,7 @@ class Shell
     {
         std::string load, peakLoad, latency;
         guitarfx::uiclient::DspLevelSummary input, output;
+        std::string designedPeak, rawPeak; // the active preset's designed peak input, and the raw input's held peak
         std::vector<guitarfx::uiclient::DspDiagnosticsGroup> table;
     };
 
@@ -838,6 +1078,7 @@ class Shell
     /// Each tick: folds in the feeds, and refreshes what the page shows a few times a second.
     void SyncDspDiagnostics(bool refresh = false);
     guitarfx::uiclient::DspDiagnostics mDspDiagnostics;
+    guitarfx::uiclient::PeakHold mDspRawPeak; // the raw input over ten seconds, beside the designed peak
     DspSnapshot mDspSnapshot;
     std::weak_ptr<el::element> mDspFiguresShown; // on screen: the snapshot is kept fresh
     std::string mDspTableShape;                  // the groups and rows the table was built with
@@ -851,9 +1092,14 @@ class Shell
     /// A footer button for ShowDialog: Primary for the action that confirms, Plain for Cancel.
     [[nodiscard]] std::shared_ptr<Button> DialogButton(const std::string& label, std::function<void()> onClick,
                                                        bool primary);
+    /// Closes the overlay, and the dialog it was opened over, if any.
     void CloseOverlay();
-    /// Esc or a tap outside: the dialog's own close (a Cancel that undoes a preview), else closing.
+    /// Esc or a tap outside: the dialog's own close (a Cancel that undoes a preview), else
+    /// DismissOverlay.
     void CancelOverlay();
+    /// Cancel: a confirm or prompt opened over a dialog goes back to that dialog; anything else
+    /// closes.
+    void DismissOverlay();
 
     // FilePicker.cpp
     /// The file dialog drawn in the view, for a host with none of its own (Linux, where a kiosk
@@ -871,13 +1117,26 @@ class Shell
     /// keeping the keyboard focus on the layer that has it.
     void RemoveLayer(Ptr layer);
     void OpenMenu(const std::string& title, std::vector<MenuItem> items);
+
     void OpenPrompt(const std::string& title, const std::string& initial, const std::string& confirmLabel,
                     std::function<void(const std::string&)> onSubmit);
+    void OpenPrompt(const std::string& title, const std::string& initial, const std::string& confirmLabel,
+                    PromptOptions options, std::function<void(const std::string&)> onSubmit);
+    /// A notice with only OK, as the web UI's showAlert; `onClose` runs however it is closed.
+    void OpenAlert(const std::string& title, const std::string& message, std::function<void()> onClose = {});
     // RiffDialogs.cpp
     /// The riff capture dialog; `arm` starts counting in at once (the footer's Rec), and
     /// `appendRiffId` saves the take as another take of that riff (the library's Edit).
     void OpenRiffCapture(bool arm, const std::string& appendRiffId = {});
+    /// Shows the Jam page's Riff Library section (the riff library is inline there, as the web's).
     void OpenRiffLibrary();
+    /// The Riff Library's saved riffs, a row each, and what it is built from.
+    [[nodiscard]] Ptr BuildRiffRows();
+    [[nodiscard]] std::string RiffSectionSignature() const;
+    [[nodiscard]] bool RiffLooperOn() const;
+    /// An audio file picked (the host's browser) and made the pending take, then New Riff opened
+    /// to trim and save it.
+    void ImportRiffAudio();
 
     // LooperStrip.cpp
     [[nodiscard]] bool LooperShown() const; // the feature is on and the app is the standalone one
@@ -887,13 +1146,22 @@ class Shell
     /// `labelled`: each spelt out beside its icon, as the full footer does when it is wide.
     /// `withLoop`: the Loop button too; the compact frame has it on the rail instead.
     std::vector<Ptr> BuildCaptureButtons(float size, bool labelled = false, bool withLoop = true);
+    /// The looper's button, or null where the looper isn't offered.
+    [[nodiscard]] std::shared_ptr<IconButton> BuildLoopButton(float size, bool labelled);
     void SyncLooper();
     void SyncLooperLive();
     void RepaintLooperLive();
     void TickLooper();
-    void OpenLooperLayers();
+    /// The Layers panel under the strip's row, as the web's inline .looper-layers.
+    void ToggleLooperLayers();
+    [[nodiscard]] Ptr BuildLooperLayers();
+    /// Loops and Options drop down from their buttons, as the web's <details> menus: the strip
+    /// stays live under them, and a second press closes them.
     void OpenLooperLoops();
     void OpenLooperOptions();
+    /// Whether the drop-down open is the strip's `menu` (1 Loops, 2 Options): if so it is closed.
+    bool CloseLooperMenu(int menu);
+    void ShowLooperMenu(int menu, Ptr body, el::rect anchor, float width, float height);
     /// The strip's Clear and Save, shared with the Options dialog: Clear asks first when the
     /// loop is unsaved; Save asks for the loop's name.
     void ClearLooperWithConfirm();
@@ -903,15 +1171,21 @@ class Shell
                      std::function<void()> onYes);
     /// Adds the chosen effect after `afterNodeId`, or, with `replaceNodeId`, puts it in that
     /// node's place.
-    void OpenEffectPicker(const std::string& afterNodeId, const std::string& replaceNodeId = {});
+    /// From a cable's + (`plus`), the small Add Effect flyout there, as the web UI's
+    /// addEffectDropdown.ts; otherwise the whole FX Library.
+    void OpenEffectPicker(const std::string& afterNodeId, const std::string& replaceNodeId = {},
+                          std::optional<el::rect> plus = std::nullopt);
     /// Adds the chosen effect on this edge of the graph.
-    void OpenEffectPickerOnEdge(const guitarfx::GraphEdge& edge);
+    void OpenEffectPickerOnEdge(const guitarfx::GraphEdge& edge, std::optional<el::rect> plus = std::nullopt);
     void ExpectAddedNode();
     void ShowToast(const std::string& title, const std::string& detail, bool isError);
-    [[nodiscard]] std::vector<const guitarfx::uiclient::EffectTypeInfo*> OfferedEffects() const;
+    /// What the FX Library lists: the catalog's effects, then the blends and saved Custom Effects.
+    [[nodiscard]] std::vector<guitarfx::uiclient::FxLibraryItem> OfferedEffects() const;
 
     // Instruments.cpp
     void OpenDemoClips();
+    /// The demo's actions under the footer's more button: the render's rate and Render WAV.
+    void OpenDemoActions(el::rect anchor);
     [[nodiscard]] const guitarfx::uiclient::DemoClip* SelectedDemoClip() const;
     [[nodiscard]] std::vector<const std::vector<guitarfx::uiclient::DemoClip>*> DemoClipLists() const;
     void OpenTuner();
@@ -953,15 +1227,34 @@ class Shell
     /// window.
     std::unique_ptr<AccessBridge> mAccess;
     bool mAccessTried = false;
+
+    /// What a screen reader was last told of the rig (AnnounceRigChanges): changes from a
+    /// footswitch, MIDI, the keys or another UI are said, as the web's live region says them.
+    struct SaidRig
+    {
+        bool known = false;
+        std::string presetId, sceneId;
+        std::vector<std::pair<std::string, bool>> nodes; // id, enabled
+    } mSaidRig;
+
+    void AnnounceRigChanges();
     /// The last click picked a chain card: Space bypasses it and Delete removes it, as when
     /// a card has focus in the web UI. Any other click clears it.
     bool mChainFocused = false;
     SlotPtr mFrameSlot, mEffectSlot;
     SlotPtr mBgSlot, mRailSlot, mTopSlot, mSceneSlot, mChainSlot, mPageSlot, mTransportSlot;
+    /// The bars over the bottom of the page (the tone preview's, the Jam player's). They sit
+    /// inside the page's KeyRouter, so Tab reaches their buttons after the page's and a screen
+    /// reader finds them with the page.
+    SlotPtr mPreviewBarSlot, mJamBarSlot;
+    /// Shows `bar` in `slot`, or nothing for null. Posted, as RemoveLayer is: the bar going may
+    /// be the one whose button was pressed.
+    void ShowBar(const SlotPtr& slot, Ptr bar);
 
     Page mPage = Page::Chain;
     bool mWide = false;               // the full layout is in force
     bool mSplit = false;              // compact, with the chain over the editor (WantsSplit)
+    bool mStack = false;              // compact, its bars stacked with no rail (WantsStack)
     bool mTouch = false;              // touch sizes are in force (TouchSizes, metrics::Touch)
     bool mControlsOpen = false;       // the compact layout's Controls strip is out
     el::extent mLastSize{0.0f, 0.0f}; // the regions sized to the window are rebuilt when it changes
@@ -981,14 +1274,29 @@ class Shell
     std::shared_ptr<class Waveform> mLooperWave;
     std::shared_ptr<Button> mLooperMain;
     std::shared_ptr<Text> mLooperStatus, mLooperTime, mLooperBar;
-    bool mLibraryExportAll = false; // Settings > Library: the whole library, not only what presets use
-    int mChainIcons = -1;           // the chain as icon tiles (1) or cards (0); -1 follows the setting
-    bool mChainAutoIcons = false;   // compact split: the cards did not fit, so tiles (BuildChain)
-    bool mChainAutoPass = false;    // BuildChain is building again as tiles
-    bool mChainDragIcons = false;   // which it was when that drag began
+    std::shared_ptr<class LooperDisplayFace> mLooperFace; // the progress bar and the count-in
+    bool mLooperLayersOpen = false;
+    std::vector<guitarfx::uiclient::Subscription> mLooperLayerSubs; // the Layers panel's feed
+    el::rect mLooperStripRect, mLooperLoopsRect, mLooperOptionsRect;
+    int mLooperMenu = 0; // the drop-down open from the strip: 1 Loops, 2 Options
+    std::weak_ptr<el::element> mLooperMenuLayer;
+    // The loop's name, typed in the strip and kept while it is rebuilt (the web's
+    // data-looper-title); Save names the loop with it.
+    std::shared_ptr<el::basic_input_box> mLooperTitleBox;
+    Ptr mLooperTitleField;
+    std::string mLooperTitleShown;
+    float mLooperBuiltHeight = 0.0f; // the strip's height as last built
+    bool mLibraryExportAll = false;  // Settings > Library: the whole library, not only what presets use
+    int mChainIcons = -1;            // the chain as icon tiles (1) or cards (0); -1 follows the setting
+    bool mChainAutoIcons = false;    // compact split: the cards did not fit, so tiles (BuildChain)
+    bool mChainAutoPass = false;     // BuildChain is building again as tiles
+    bool mChainDragIcons = false;    // which it was when that drag began
     guitarfx::uiclient::PresetTrail mPresetTrail;
     std::shared_ptr<guitarfx::uiclient::TapTempo> mTapTempo;
-    bool mWrapChain = true; // the web UI's signalPathWrapCompact, on unless turned off
+    bool mWrapChain = true;      // the web UI's signalPathWrapCompact, on unless turned off
+    bool mSceneRenaming = false; // a scene chip's name field is open: the row is left as it is
+    int mControlsCollapsedSet = -1, mChainCollapsedSet = -1;            // chosen here, ahead of the settings' echo
+    bool mBuiltControlsCollapsed = false, mBuiltChainCollapsed = false; // as the frame and stage were built
 
     // The Tones page: what it shows, and what the service last answered.
     TonesTab mTonesTab = TonesTab::Presets;
@@ -999,13 +1307,31 @@ class Shell
     bool mTonesLoaded = false; // the open tab has been asked for since it was opened
     int mTonesGeneration = 0;  // answers to an older request are dropped
     std::string mTonesError;
-    std::vector<guitarfx::uiclient::tones::Tone> mToneItems, mTonePacks, mToneHomePacks;
+    std::vector<guitarfx::uiclient::tones::Tone> mToneItems, mTonePacks;
+    std::vector<guitarfx::uiclient::tones::HomeRow> mToneHomeRows;          // /home's pack rows, a strip each
     std::vector<guitarfx::uiclient::tones::Tone> mToneMine, mToneMinePacks; // My Content
-    bool mTonesList = false;                                                // List rather than Cards
+    bool mTonesList = false;     // List rather than Cards (the shared toneSharing.feedLayout setting)
+    bool mTonesListRead = false; // read from the setting once
+    std::string mTonesTyped;     // the search as typed, run once the keys stop (TickToneSearch)
+    std::chrono::steady_clock::time_point mTonesSearchDue{};
+    bool mTonesSearchPending = false;
     std::shared_ptr<el::basic_input_box> mTonesSearchBox;
     Ptr mTonesSearchElement;
     int mToneListener = 0;
     std::string mTonesSignature;
+    TonesSection mTonesSection = TonesSection::Community;
+
+    // Your Presets: where it is looking, its own, so browsing here does not move the chooser.
+    std::string mLocalFolder = "__all__", mLocalQuery, mLocalTag;
+    bool mLocalByRating = false;
+    std::shared_ptr<el::basic_input_box> mLocalSearchBox;
+    Ptr mLocalSearchElement;
+    SlotPtr mLocalGridSlot, mLocalSummarySlot;
+    float mLocalGridWidth = 0.0f;
+
+    // Tone 3000: what the browser shows, and the hour's results (TonesTone3000.cpp).
+    struct Tone3000Browse;
+    std::shared_ptr<Tone3000Browse> mT3;
     RemoteImages mRemoteImages;
     std::unique_ptr<LayoutImages> mLayoutImages; // the custom layouts' pictures
 
@@ -1015,7 +1341,8 @@ class Shell
     double mHistorySettleUntil = 0.0; // the engine's echo of a restore is not a new edit until then
     std::string mSelectedNode;
     bool mShowAdvanced = false;
-    bool mShowIrList = false; // the IR Cabinet's list between its slots, for every cabinet
+    std::string mShowAdvancedFor; // the node the tab was picked on: each other node opens on Main
+    bool mShowIrList = false;     // the IR Cabinet's list between its slots, for every cabinet
     unsigned mDirty = kAll;
     bool mShowingStarting = false;
     std::string mAppliedTheme;
@@ -1033,8 +1360,12 @@ class Shell
     SlotPtr mPresetListSlot;
     SlotPtr mChooserSlot; // the preset chooser's content, rebuilt as the library changes
     bool mChooserOpen = false;
-    bool mChooserSetlistsOpen = false;                   // its Setlists section unfolded
-    std::shared_ptr<el::basic_input_box> mFolderNameBox; // its New Folder Name, kept across rebuilds
+    bool mChooserSetlistsOpen = false;                    // its Setlists section unfolded
+    std::string mLoadingPresetId;                         // the card clicked, dimmed until it is the one playing
+    std::shared_ptr<el::basic_input_box> mFolderNameBox;  // its New Folder Name, kept across rebuilds
+    std::shared_ptr<el::basic_input_box> mSetlistNameBox; // its Setlists' new name and bank, kept across rebuilds
+    std::shared_ptr<el::basic_input_box> mSetlistBankBox;
+    Ptr mSetlistNameElement, mSetlistBankElement;
     Ptr mFolderNameElement;
     std::string mPadsEditingId;                        // the setlist the pads' bank editor is open on
     std::optional<std::string> mPadsEditAfterCreate;   // Add bank: edit the new one, not this one, once made
@@ -1051,7 +1382,8 @@ class Shell
     el::rect mThemeFlyoutAnchor;
     bool mOptionsOpen = false; // the overlay is the compact footer's Options sheet
     el::rect mOptionsAnchor;
-    bool mZoomKnown = false; // mZoomStored holds the zoom stored, or the one first seen
+    bool mZoomKnown = false;         // mZoomStored holds the zoom stored, or the one first seen
+    bool mBetaNoticeChecked = false; // ShowNativeUiBetaNoticeOnce has looked, this session
     float mZoomStored = 1.0f;
     Ptr mToast;
     Ptr mFilePickerLayer; // over everything: a dialog may be what asked for the file
@@ -1060,12 +1392,37 @@ class Shell
     std::shared_ptr<bool> mAlive = std::make_shared<bool>(true);
     std::function<void()> mOnOverlayClosed; // runs when the overlay closes
     std::function<void()> mOverlayCancel;   // what Esc and a tap outside do to the dialog: its own Cancel
+
+    // The dialog a confirm or prompt was opened over (the web UI's .modal-interrupt): still in the
+    // view, under the confirm's backdrop, and back in front when the confirm is cancelled.
+    struct SuspendedOverlay
+    {
+        Ptr layer;
+        std::function<void()> cancel;
+        std::function<void()> onClosed;
+    };
+
+    std::optional<SuspendedOverlay> mSuspendedOverlay;
+    bool mNextOverlayInterrupts = false;                           // the next ShowOverlay is a confirm or prompt
     std::vector<guitarfx::uiclient::Subscription> mInstrumentSubs; // an open dialog's live feeds
-    guitarfx::uiclient::Subscription mImportWatch;                 // a preset archive import, until it answers
+    // The Riff Library's folder as typed, kept while the section is rebuilt; the engine's path is
+    // put back in it when that changes.
+    std::shared_ptr<el::basic_input_box> mRiffPathBox;
+    Ptr mRiffPathField;
+    std::string mRiffPathShown;
+    bool mRiffImportWaiting = false; // Import Audio asked for a file: New Riff opens on its take
+    int mRiffImportSerial = 0;
+    guitarfx::uiclient::Subscription mImportWatch; // a preset archive import, until it answers
     std::string mPickerCategory;
-    std::optional<guitarfx::GraphEdge> mPickerEdge; // the open picker adds on this edge, not after a node
-    el::rect mEditorArea;                           // where the full layout's editor is: the FX Library opens over it
-    Ptr mDragGhost;                                 // the FX Library's effect being dragged, by the pointer
+    std::optional<guitarfx::GraphEdge> mPickerEdge;  // the open picker adds on this edge, not after a node
+    el::rect mEditorArea;                            // where the full layout's editor is: the FX Library opens over it
+    Ptr mDragGhost;                                  // the FX Library's effect being dragged, by the pointer
+    Ptr mLibraryGhost;                               // a preset, folder or slot being dragged (PresetDrag.cpp)
+    std::vector<std::weak_ptr<DropSpot>> mDropSpots; // where one can land, as last drawn
+    std::weak_ptr<DropSpot> mDropLit;                // the one lit
+    bool mLibraryDragging = false;                   // a drag has begun (the window redrawn)
+    bool mLibraryDragLeftChooser = false;            // it left the chooser, which has faded
+    std::shared_ptr<float> mOverlayAlpha = std::make_shared<float>(1.0f); // the popover's fade
     guitarfx::uiclient::EffectPresentation mPresentation;
 
     // After adding an effect, the node that appears next is selected and shown.

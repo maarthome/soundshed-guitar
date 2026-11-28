@@ -6,10 +6,15 @@
 // them, a split's branch count, and the parameters in groups, each a knob, a switch or a list.
 // A parameter the engine declares with `visibleWhen` shows only while that holds.
 
+#include "ui/effects/EnumPicker.h"
+#include "ui/effects/PanelBackground.h"
 #include "ui/shell/Shell.h"
 
 #include "dsp/EffectGuids.h"
+#include "uiclient/BlendMix.h"
 #include "uiclient/EffectLayouts.h"
+#include "uiclient/ExposedResources.h"
+#include "uiclient/FeatureFlags.h"
 #include "uiclient/NodeLabels.h"
 #include "uiclient/ParamFormat.h"
 #include "uiclient/PitchShiftRange.h"
@@ -22,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <set>
 
 namespace nanoq::ui
 {
@@ -49,7 +55,7 @@ EffectParamInfo BoundaryTrim()
 // section padded 8, inside the panel padded 10; the panel at least 448 wide.
 constexpr float kCellWidth = 74.0f;
 constexpr float kCellHeight = 72.0f;
-constexpr float kPickerWidth = 120.0f;
+constexpr float kPickerWidth = 200.0f; // the web's trigger: 180 to 280
 constexpr float kCellGap = 4.0f;
 constexpr float kGroupPadX = 11.0f;
 constexpr float kGroupGap = 13.0f;
@@ -78,6 +84,52 @@ bool IsIrAbParam(const std::string& key)
 
     return std::find(std::begin(kIrAbCentreKeys), std::end(kIrAbCentreKeys), key) != std::end(kIrAbCentreKeys);
 }
+
+/// A mixer input's mute (.mixer-mute-toggle): a small switch, green while the input plays and
+/// red while it is muted.
+class MuteSwitch final : public Pressable
+{
+  public:
+    explicit MuteSwitch(const Theme& theme) : mTheme(theme)
+    {
+    }
+
+    void Set(bool muted)
+    {
+        mMuted = muted;
+    }
+
+    [[nodiscard]] AccessInfo Describe() const override
+    {
+        AccessInfo info = Pressable::Describe();
+        info.role = AccessRole::Toggle;
+        info.toggled = mMuted ? 1 : 0;
+        return info;
+    }
+
+    el::view_limits limits(const el::basic_context&) const override
+    {
+        return {{28.0f, 16.0f}, {28.0f, 16.0f}};
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        NoteDrawn(ctx);
+        auto& cnv = ctx.canvas;
+        const auto b = ctx.bounds;
+        cnv.fill_style((mMuted ? mTheme.Error() : mTheme.Success()).opacity(mHover ? 1.0f : 0.85f));
+        cnv.fill_round_rect(b, b.height() * 0.5f);
+        const float x = mMuted ? b.right - 7.0f : b.left + 7.0f;
+        cnv.fill_style(el::colors::white);
+        cnv.begin_path();
+        cnv.add_circle(el::circle{x, b.top + b.height() * 0.5f, 5.0f});
+        cnv.fill();
+    }
+
+  private:
+    const Theme& mTheme;
+    bool mMuted = false;
+};
 
 /// "IR A Level" is "Level" on IR A's card, "Mic B Radial" is "Radial" on IR B's.
 std::string NameInSlot(const std::string& name)
@@ -205,7 +257,8 @@ class PanelCheek final : public el::element
 class EffectBackdrop final : public el::element
 {
   public:
-    EffectBackdrop(const Theme& theme, float shadeTo) : mTheme(theme), mShadeTo(shadeTo)
+    EffectBackdrop(const Theme& theme, const nlohmann::json& appSettings, float shadeTo)
+        : mTheme(theme), mAppSettings(appSettings), mShadeTo(shadeTo)
     {
     }
 
@@ -213,6 +266,15 @@ class EffectBackdrop final : public el::element
     {
         auto& cnv = ctx.canvas;
         const auto b = ctx.bounds;
+
+        // The player's own picture takes the place of all of it (custom-background.css).
+        if (const auto picture = PanelBackgroundImage(mAppSettings))
+        {
+            DrawPanelBackground(cnv, mTheme, *picture, b,
+                                guitarfx::uiclient::visualizer_background::Fade(mAppSettings));
+            return;
+        }
+
         cnv.fill_style(mTheme.Background());
         cnv.fill_rect(b);
         const auto& backdrops = mTheme.Controls().backdrops;
@@ -240,6 +302,7 @@ class EffectBackdrop final : public el::element
 
   private:
     const Theme& mTheme;
+    const nlohmann::json& mAppSettings; // the client's, read as it draws
     float mShadeTo;
 };
 
@@ -298,6 +361,103 @@ Ptr Sized(float w, float h, Ptr content)
 {
     return FixedWidth(w, FixedHeight(h, std::move(content)));
 }
+
+/// A NAM node playing a capture that includes its cabinet (chainRules.ts
+/// nodeUsesFullRigNamCategory): filed as a full rig, or with "cab" in its gear_type.
+bool PlaysFullRigNam(const ClientState& state, const guitarfx::GraphNode& node)
+{
+    namespace guids = guitarfx::EffectGuids;
+
+    if (node.type != guids::kAmpNamOptimized && node.type != guids::kAmpNam && node.type != guids::kFxNam &&
+        node.type != guids::kAmpNamBlend)
+    {
+        return false;
+    }
+
+    const auto lower = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const auto first = text.find_first_not_of(" 	");
+        const auto last = text.find_last_not_of(" 	");
+        return first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+    };
+
+    for (const auto& ref : node.resources)
+    {
+        const auto* resource = ref.resourceId.empty() ? nullptr : state.FindLibraryResource("nam", ref.resourceId);
+
+        if (resource == nullptr)
+        {
+            continue;
+        }
+
+        auto category = lower(resource->category);
+
+        if (category.empty() && resource->metadata.is_object())
+        {
+            category = lower(resource->metadata.value("gear", std::string()));
+        }
+
+        const auto gearType =
+            resource->metadata.is_object() ? lower(resource->metadata.value("gear_type", std::string())) : "";
+
+        if (category == "full-rig" || gearType.find("cab") != std::string::npos)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/// An IR Cabinet whose signal path (everything connected to it, either way) already has a full-rig
+/// capture (chainRules.ts shouldShowFullRigCabModelNote).
+bool ShowsFullRigCabNote(const ClientState& state, const guitarfx::GraphNode& node)
+{
+    if (node.type != guitarfx::EffectGuids::kCabIr || !state.activePreset)
+    {
+        return false;
+    }
+
+    const auto& graph = state.activePreset->graph;
+    std::vector<std::string> queue{node.id};
+    std::set<std::string> visited{node.id};
+
+    while (!queue.empty())
+    {
+        const auto current = queue.back();
+        queue.pop_back();
+
+        for (const auto& edge : graph.edges)
+        {
+            const std::string next = edge.from == current ? edge.to : edge.to == current ? edge.from : std::string();
+
+            if (next.empty() || !visited.insert(next).second)
+            {
+                continue;
+            }
+
+            if (const auto* other = graph.FindNode(next); other != nullptr && PlaysFullRigNam(state, *other))
+            {
+                return true;
+            }
+
+            queue.push_back(next);
+        }
+    }
+
+    return false;
+}
+} // namespace
+
+namespace
+{
+/// Whether a blend shows a knob for `key`: only those are moved when a Snap turn lands on a capture.
+bool MapsBlendParam(const BlendSummary& blend, const std::string& key)
+{
+    const auto ids = MappedBlendParamIds(blend);
+    return std::find(ids.begin(), ids.end(), key) != ids.end();
+}
 } // namespace
 
 std::string Shell::EffectPageSignature() const
@@ -349,6 +509,17 @@ std::string Shell::EffectPageSignature() const
 
     s += "|blends" + std::to_string(mState.blends.size());
 
+    // A Custom Effect's slots come with the module it loads (its descriptor).
+    if (type != nullptr && !IsBoundaryNode(*node))
+    {
+        s += "|xr";
+
+        for (const auto& slot : NodeExposedResources(mState, *node))
+        {
+            s += ":" + slot.resourceId;
+        }
+    }
+
     // The IR Cabinet's cards fade what L/R Split and Mics leave doing nothing.
     if (node->type == guitarfx::EffectGuids::kCabIr)
     {
@@ -359,6 +530,8 @@ std::string Shell::EffectPageSignature() const
             const auto it = node->params.find(key);
             s += it != node->params.end() && it->second >= 0.5 ? "1" : "0";
         }
+
+        s += ShowsFullRigCabNote(mState, *node) ? "|fullrig" : "";
     }
 
     // The model and IR slots show what is loaded and what the library holds.
@@ -372,11 +545,13 @@ std::string Shell::EffectPageSignature() const
         const auto it = mState.resources.find(type->resourceType);
         s += "|lib" + std::to_string(it != mState.resources.end() ? it->second.size() : 0);
 
-        // A plugin host also shows whether it is loading and which plugins are starred.
+        // A plugin host also shows whether it is loading, why it failed, and which plugins are
+        // starred.
         if (type->resourceType == "plugin")
         {
             s += std::string(mState.pluginLoadsPending.count(node->id) > 0 ? "|loading" : "") + "|fav" +
-                 mState.appSettings.value("plugins.hostFavorites", nlohmann::json::array()).dump();
+                 mState.appSettings.value("plugins.hostFavorites", nlohmann::json::array()).dump() + "|fail" +
+                 PluginLoadFailureText(*node);
         }
     }
 
@@ -412,6 +587,29 @@ std::string Shell::EffectPageSignature() const
                 s += "|e" + edge.to;
             }
         }
+
+        // And its routing line follows its mode.
+        int outgoing = 0;
+
+        for (const auto& edge : mState.activePreset->graph.edges)
+        {
+            outgoing += edge.from == node->id ? 1 : 0;
+        }
+
+        s += "|route" + guitarfx::uiclient::DescribeSplitRouting(*node, outgoing);
+    }
+
+    // The mixer's Input Channels follow what feeds each port.
+    if (IsMixerType(node->type) && mState.activePreset)
+    {
+        for (const auto& edge : mState.activePreset->graph.edges)
+        {
+            if (edge.to == node->id)
+            {
+                const auto* source = mState.activePreset->graph.FindNode(edge.from);
+                s += "|in" + std::to_string(edge.toPort) + ":" + (source != nullptr ? source->type : edge.from);
+            }
+        }
     }
 
     s += EqSectionSignature(*node);
@@ -431,7 +629,7 @@ Ptr Shell::BuildEffectPage()
         auto hint = std::make_shared<Text>(mTheme, "Choose an effect in the chain to see its controls.", 13.0f);
         hint->Colour(mTheme.TextMuted()).Alignment(Text::Align::Centre);
         return Over(PadXY(24, 48, Col({FixedHeight(24, hint), std::make_shared<el::element>()})),
-                    std::make_shared<EffectBackdrop>(mTheme, 0.0f));
+                    std::make_shared<EffectBackdrop>(mTheme, mState.appSettings, 0.0f));
     }
 
     const std::string nodeId = node->id;
@@ -440,7 +638,11 @@ Ptr Shell::BuildEffectPage()
     const auto category = NodeCategory(mState, *node);
     const auto tint = Theme::Argb(mPresentation.CategoryColour(category));
     const bool hasPlugin = !boundary && type != nullptr && type->resourceType == "plugin";
-    const bool hasSlots = !boundary && type != nullptr && !type->resourceType.empty() &&
+    // A composite or Custom Effect names its slots (exposedResources), each with its own kind of
+    // file; a plain effect has the one slot of its type's kind.
+    const auto exposedSlots =
+        boundary || type == nullptr ? std::vector<ExposedResourceInfo>{} : NodeExposedResources(mState, *node);
+    const bool hasSlots = !boundary && type != nullptr && (!type->resourceType.empty() || !exposedSlots.empty()) &&
                           type->resourceType != "plugin" && node->type != guitarfx::EffectGuids::kAmpNamBlend;
 
     // A custom layout draws the effect in place of its groups of controls; a backdrop layout has
@@ -465,6 +667,14 @@ Ptr Shell::BuildEffectPage()
     // ── Which controls: this tab's, and only those whose condition holds ──
     std::vector<EffectParamInfo> params;
     bool anyAdvanced = false;
+    bool anyMain = false;
+
+    // Each node opens on Main, as the web UI's panel does.
+    if (mShowAdvancedFor != node->id)
+    {
+        mShowAdvancedFor = node->id;
+        mShowAdvanced = false;
+    }
 
     if (boundary)
     {
@@ -477,30 +687,37 @@ Ptr Shell::BuildEffectPage()
                                  ? guitarfx::uiclient::CountSplitBranches(mState.activePreset->graph, node->id)
                                  : 0;
 
-        for (const auto& param : type->parameters)
-        {
+        const auto shown = [&](const EffectParamInfo& param) {
             // The IR Cabinet's A and B controls are on its slots' cards, whichever tab is shown.
-            if (irAb && IsIrAbParam(param.key))
-            {
-                continue;
-            }
-
             // The graphic EQ's own sliders stand for all its controls, and Pickup Match's design
             // controls are in its design blocks, as the web UI shows them.
-            if (node->type == guitarfx::EffectGuids::kEqGraphic ||
-                (node->type == guitarfx::EffectGuids::kPickupMatch && IsPickupDesignParam(param.key)))
+            return !(irAb && IsIrAbParam(param.key)) && node->type != guitarfx::EffectGuids::kEqGraphic &&
+                   !(node->type == guitarfx::EffectGuids::kPickupMatch && IsPickupDesignParam(param.key));
+        };
+
+        for (const auto& param : type->parameters)
+        {
+            if (shown(param))
+            {
+                anyAdvanced = anyAdvanced || param.advanced;
+                anyMain = anyMain || !param.advanced;
+            }
+        }
+
+        // With no main controls there is no Advanced tab: every control shows (panel.ts).
+        if (!anyMain)
+        {
+            anyAdvanced = false;
+        }
+
+        for (const auto& param : type->parameters)
+        {
+            if (!shown(param) || (branches > 0 && !guitarfx::uiclient::IsSplitterParamInUse(param.key, branches)))
             {
                 continue;
             }
 
-            anyAdvanced = anyAdvanced || param.advanced;
-
-            if (branches > 0 && !guitarfx::uiclient::IsSplitterParamInUse(param.key, branches))
-            {
-                continue;
-            }
-
-            if (param.advanced == mShowAdvanced && IsParamVisible(param, *node, type))
+            if ((!anyAdvanced || param.advanced == mShowAdvanced) && IsParamVisible(param, *node, type))
             {
                 params.push_back(param);
             }
@@ -511,6 +728,46 @@ Ptr Shell::BuildEffectPage()
     {
         mShowAdvanced = false;
     }
+
+    // A NAM Blend's mapped knobs (panel.ts): one per parameter its models were captured at, first,
+    // each on that parameter's own scale over the captured range. With any, the Blend sweep goes:
+    // the knobs pick the model.
+    const auto* nodeBlend = boundary || customControls ? nullptr : FindNodeBlend(mState, *node);
+    const auto blendKeys = nodeBlend != nullptr ? MappedBlendParamIds(*nodeBlend) : std::vector<std::string>{};
+
+    if (!blendKeys.empty())
+    {
+        params.erase(
+            std::remove_if(params.begin(), params.end(), [](const EffectParamInfo& p) { return p.key == "blend"; }),
+            params.end());
+
+        if (!mShowAdvanced)
+        {
+            std::vector<EffectParamInfo> mapped;
+
+            for (const auto& key : blendKeys)
+            {
+                const auto current = node->params.find(key);
+                const auto range = ComputeBlendParamRange(
+                    key, *nodeBlend,
+                    current != node->params.end() ? std::optional<double>(current->second) : std::nullopt);
+                EffectParamInfo info;
+                info.key = key;
+                info.name = range.spec != nullptr ? range.spec->label : key;
+                info.minValue = range.min;
+                info.maxValue = range.max;
+                info.defaultValue = range.defaultValue;
+                info.step = 0.1;
+                mapped.push_back(std::move(info));
+            }
+
+            params.insert(params.begin(), mapped.begin(), mapped.end());
+        }
+    }
+
+    const auto isBlendKey = [&blendKeys](const std::string& key) {
+        return std::find(blendKeys.begin(), blendKeys.end(), key) != blendKeys.end();
+    };
 
     // Pitch Shift's Semitones knob spans the node's own range, in whole semitones only while Snap
     // to Semitone is on (pitchShiftRange.ts), and its default is held inside that range, as the
@@ -586,39 +843,36 @@ Ptr Shell::BuildEffectPage()
                         std::ceil(MeasureControlText(name, label, metrics::Readable(label.size + 1.0f))) + 4.0f);
     };
 
-    // A control's cell, its width and the cell, named `shown`: a list's chip, a switch or a knob.
-    const auto makeCell = [&](const EffectParamInfo& info, const std::string& shown) -> std::pair<float, Ptr> {
+    // A control's cell, its width and the cell, named `shown`: a list's chip, a switch, an A-B
+    // slider or a knob. `blendAsKnob`: an A/B blend drawn as a knob, as the IR cards draw theirs.
+    const auto makeCell = [&](const EffectParamInfo& info, const std::string& shown,
+                              bool blendAsKnob = false) -> std::pair<float, Ptr> {
         // A right click on any of them: MIDI Learn, for whichever control it is (Automation.cpp).
         auto menu = [this, key = info.key](el::point at) {
             if (const auto* n = SelectedNode())
             {
-                OpenNodeParamMidiMenu(n->type, key, at);
+                OpenNodeParamMidiMenu(*n, key, at);
             }
         };
 
         if (IsEnumParam(info) && WantsPicker(info))
         {
-            // A long list: its current choice on a chip; a tap opens the list.
-            auto picker = std::make_shared<IconButton>(mTheme, mIcons, "", IconButton::Look::Chip);
-            picker->Size(kPickerWidth, 26).Caret(true);
+            // A long list: its current choice's picture, name and kind; a tap opens the flyout.
+            auto picker = std::make_shared<EnumPickerTrigger>(mTheme, mIcons, info);
             picker->AccessName(info.name);
-            picker->onClick = [this, nodeId, info] { OpenEnumPicker(nodeId, info); };
+            std::weak_ptr<EnumPickerTrigger> weakPicker = picker;
+            picker->onClick = [this, nodeId, info, weakPicker] {
+                const auto p = weakPicker.lock();
+                OpenEnumPicker(nodeId, info, p ? p->Bounds() : el::rect{});
+            };
             picker->onMenu = menu;
             mLive.Bind(
-                picker, [valueOf, info] { return EnumLabelIndex(info, valueOf(info)); },
-                [labels = info.labels](IconButton& p, int index) {
-                    p.Label(index >= 0 && static_cast<std::size_t>(index) < labels.size()
-                                ? labels[static_cast<std::size_t>(index)]
-                                : std::string(),
-                            11.0f);
-                });
+                picker, [valueOf, info] { return EnumLabelIndex(info, valueOf(info)); }, &EnumPickerTrigger::Set);
             auto label = std::make_shared<Text>(mTheme, Upper(shown), metrics::Readable(9.0f), Weight::SemiBold);
             label->Colour(Theme::Argb(mTheme.Controls().label.colour)).Alignment(Text::Align::Centre);
-            // Touch sizes: the chip is hit over 36 px.
-            const bool touch = metrics::Touch();
             return {kPickerWidth, Sized(kPickerWidth, kCellHeight,
-                                        Col({FixedHeight(12, label), VGap(touch ? 2 : 12),
-                                             FixedHeight(touch ? 36 : 26, picker), std::make_shared<el::element>()}))};
+                                        Col({FixedHeight(12, label), VGap(8), FixedHeight(40, picker),
+                                             std::make_shared<el::element>()}))};
         }
 
         if (IsToggleParam(info))
@@ -645,6 +899,164 @@ Ptr Shell::BuildEffectPage()
                 Mark(kValues | kPage);
             };
             return {cellFor(shown), toggle};
+        }
+
+        if (info.unit == "blend" && !blendAsKnob)
+        {
+            // An A/B blend (panel.ts, .node-param-blend-group): A, the slider, B, and "A", "B" or
+            // the share of B under it.
+            constexpr float kBlendCellWidth = 156.0f;
+            const auto blendText = [](double v) {
+                return v <= 0.01   ? std::string("A")
+                       : v >= 0.99 ? std::string("B")
+                                   : std::to_string(std::lround(v * 100.0)) + "%";
+            };
+            const auto span = [info](double v) {
+                return info.maxValue > info.minValue ? (v - info.minValue) / (info.maxValue - info.minValue) : 0.0;
+            };
+            auto slider = std::make_shared<ParamSlider>(mTheme, "");
+            slider->AccessName(info.name);
+            mLive.Bind(
+                slider, [valueOf, info] { return valueOf(info); },
+                [span, blendText](ParamSlider& sl, double v) { sl.Update(span(v), blendText(v)); });
+            slider->onChange = [this, nodeId, info, blendText, sl = slider.get()](double position) {
+                const double value =
+                    std::round((info.minValue + position * (info.maxValue - info.minValue)) * 100.0) / 100.0;
+                sl->Update(position, blendText(value));
+                mSession.Commands().SetNodeParam(nodeId, info.key, value);
+                NoteChainEdit();
+                Mark(kValues);
+            };
+            slider->onReset = [this, nodeId, info] {
+                mSession.Commands().SetNodeParam(nodeId, info.key, info.defaultValue);
+                NoteChainEdit();
+                Mark(kValues);
+            };
+            const auto small = [this](const std::string& text, Text::Align align) {
+                auto t = std::make_shared<Text>(mTheme, text, metrics::Readable(9.0f), Weight::SemiBold);
+                t->Colour(Theme::Argb(mTheme.Controls().label.colour)).Alignment(align);
+                return t;
+            };
+            return {kBlendCellWidth,
+                    Sized(kBlendCellWidth, kCellHeight,
+                          Col({FixedHeight(12, small(Upper(shown), Text::Align::Centre)), FixedHeight(44, slider),
+                               FixedHeight(14, Pad(6, 0, 6, 0,
+                                                   Row({small("A", Text::Align::Left), Stretch(),
+                                                        small("B", Text::Align::Right)})))}))};
+        }
+
+        if (isBlendKey(info.key))
+        {
+            // A blend's mapped knob (paramControls.ts): shown on its parameter's scale, sent 0..1;
+            // its captures are marked on it; in Snap mode a turn lands on the nearest capture,
+            // and the other knobs move to it too.
+            const auto* spec = FindBlendParamSpec(info.key);
+            const auto span = [info](double display) {
+                return info.maxValue > info.minValue
+                           ? std::clamp((display - info.minValue) / (info.maxValue - info.minValue), 0.0, 1.0)
+                           : 0.0;
+            };
+            const auto oneDecimal = [](double display) {
+                char text[24];
+                std::snprintf(text, sizeof text, "%.1f", display);
+                return std::string(text);
+            };
+            // The node's blend and its values now, looked up again each time: the page holds no
+            // pointer into the state.
+            const auto target = [this, nodeId]() -> std::pair<const BlendSummary*, std::map<std::string, double>> {
+                const auto* n = mState.activePreset ? mState.activePreset->graph.FindNode(nodeId) : nullptr;
+                const auto* b = n != nullptr ? FindNodeBlend(mState, *n) : nullptr;
+                return {b, b != nullptr ? BlendTarget(*n, *b) : std::map<std::string, double>{}};
+            };
+
+            auto knob = std::make_shared<ParamKnob>(mTheme, shown);
+            knob->AccessName(info.name);
+            knob->Large(true);
+            knob->onMenu = menu;
+            mLive.Bind(
+                knob,
+                [target, key = info.key, spec] {
+                    const auto [b, t] = target();
+                    const auto it = t.find(key);
+                    return it != t.end() ? DenormalizeBlendValue(it->second, spec) : 0.0;
+                },
+                [span, oneDecimal](ParamKnob& k, double v) { k.Update(span(v), oneDecimal(v)); });
+            mLive.Bind(
+                knob,
+                [target, key = info.key, span] {
+                    std::vector<ParamKnob::Mark> marks;
+                    const auto [b, t] = target();
+
+                    if (b != nullptr)
+                    {
+                        for (const auto& point : BlendMappedPoints(key, *b, t))
+                        {
+                            marks.push_back({span(point.display), point.selectable, point.selected});
+                        }
+                    }
+
+                    return marks;
+                },
+                &ParamKnob::SetMarks);
+
+            const auto send = [this, nodeId, key = info.key, spec, target](double display) {
+                const double value = NormalizeBlendValue(display, spec);
+                const auto* n = SelectedNode();
+                const auto [b, t] = target();
+
+                if (n != nullptr && n->id == nodeId && b != nullptr && BlendSnaps(*n, *b))
+                {
+                    auto moved = t;
+                    moved[key] = value;
+
+                    if (const auto* closest = ClosestBlendMapping(key, value, *b, moved))
+                    {
+                        for (const auto& [id, captured] : BlendMappingParams(*closest))
+                        {
+                            const auto now = n->params.find(id);
+
+                            if (MapsBlendParam(*b, id) && (now == n->params.end() || now->second != captured))
+                            {
+                                mSession.Commands().SetNodeParam(nodeId, id, captured);
+                            }
+                        }
+
+                        return;
+                    }
+                }
+
+                mSession.Commands().SetNodeParam(nodeId, key, value);
+            };
+            knob->onChange = [this, info, send, oneDecimal, k = knob.get()](double position) {
+                const double display =
+                    std::round((info.minValue + position * (info.maxValue - info.minValue)) * 10.0) / 10.0;
+                k->SetValueText(oneDecimal(display));
+                send(display);
+                NoteChainEdit();
+                Mark(kValues);
+            };
+            knob->onReset = [this, info, send] {
+                send(info.defaultValue);
+                NoteChainEdit();
+                Mark(kValues);
+            };
+            knob->editText = [info, oneDecimal, target, spec] {
+                const auto [b, t] = target();
+                const auto it = t.find(info.key);
+                return oneDecimal(it != t.end() ? DenormalizeBlendValue(it->second, spec) : info.defaultValue);
+            };
+            knob->onTyped = [this, info, send](const std::string& entered) {
+                if (const auto typed = ParseTypedNumber(entered))
+                {
+                    send(std::clamp(*typed, info.minValue, info.maxValue));
+                    NoteChainEdit();
+                }
+
+                Mark(kValues);
+            };
+            const float cell = cellFor(shown);
+            knob->CellWidth(cell);
+            return {cell, knob};
         }
 
         {
@@ -736,8 +1148,7 @@ Ptr Shell::BuildEffectPage()
     // picker and its own knobs; between the cards, the blend, L/R Split and Mics. A control that
     // does nothing as things stand is faded where it is, as the web UI's are (the page is rebuilt
     // when L/R Split, Mics or a slot changes).
-    constexpr float kAbPickerMin = 220.0f, kAbDivider = 13.0f, kAbHeadHeight = 22.0f, kAbPadTop = 10.0f,
-                    kAbPadBottom = 8.0f;
+    constexpr float kAbHeadHeight = 22.0f, kAbPadTop = 10.0f, kAbPadBottom = 8.0f;
     // The IR list (NodeControls.cpp BuildIrList): closed, its 30 by 29 button at the top of the
     // middle column (or the end of the blend's row); open, its panel under the cards.
     constexpr float kIrListButton = 30.0f, kIrListClosed = 29.0f, kIrListOpen = 318.0f;
@@ -751,30 +1162,26 @@ Ptr Shell::BuildEffectPage()
                                      [key](const EffectParamInfo& p) { return p.key == key; });
         return it != type->parameters.end() ? &*it : nullptr;
     };
-    // The knobs' widths four abreast and two by two, and the middle's.
-    float abKnobRow = 0.0f, abKnobPair = 0.0f, abCentre = 0.0f;
+    // The middle column's width, and the knobs' widths in a card.
+    float abCentre = 0.0f;
+    float abKnobWidths[4] = {};
 
     if (irAb)
     {
-        float w[4] = {};
-
         for (std::size_t i = 0; i < 4; ++i)
         {
             const auto* info = abParam(kIrAbSlotKeys[0][i]);
-            w[i] = info != nullptr ? cellFor(NameInSlot(info->name)) : 0.0f;
+            abKnobWidths[i] = info != nullptr ? std::max(cellFor(NameInSlot(info->name)), 54.0f) : 0.0f;
         }
 
-        abKnobRow = w[0] + w[1] + w[2] + w[3] + 3.0f * kCellGap + kAbDivider;
-        abKnobPair = std::max(w[0] + w[1], w[2] + w[3]) + kCellGap;
         // Blend, L/R Split and Mics one over another (.ir-ab-centre), 10 px inside its sides.
         abCentre = std::max({cellFor("Blend"), cellFor("L/R Split"), cellFor("Mics"), kIrListButton}) + 2.0f * 10.0f;
     }
 
-    // The section's width with the cards' knobs `knobs` wide: a card is never narrower than its
-    // picker needs.
-    const auto abWidth = [&](float knobs) {
-        return 2.0f * (std::max(knobs, kAbPickerMin) + 2.0f * kGroupPadX) + abCentre + 2.0f * kGroupGap;
-    };
+    // The web UI's container widths (ir-ab.css): over 700 px the cards and the blend stand
+    // abreast; over 520 px the cards share a line with the blend in a row under them; narrower,
+    // everything stacks.
+    constexpr float kAbThreeAbreast = 700.0f, kAbTwoAbreast = 520.0f;
 
     // A slot's Invert as a console's phase button (.ir-ab-invert): a small Ø in an input-coloured
     // box with a medium border, its border lit with the accent under the pointer; on, the accent's
@@ -818,8 +1225,8 @@ Ptr Shell::BuildEffectPage()
             cnv.stroke_style(mOn || mHover ? mTheme.Accent() : mTheme.BorderStrong());
             cnv.line_width(1.0f);
             cnv.stroke_round_rect(b.inset(0.5f, 0.5f), radius);
-            FillText(cnv, "\xC3\x98", Font(Weight::SemiBold).size(13.0f), mOn ? mTheme.Accent() : mTheme.TextSecondary(),
-                     b, HAlign::Centre);
+            FillText(cnv, "\xC3\x98", Font(Weight::SemiBold).size(13.0f),
+                     mOn ? mTheme.Accent() : mTheme.TextSecondary(), b, HAlign::Centre);
         }
 
       private:
@@ -865,7 +1272,7 @@ Ptr Shell::BuildEffectPage()
                 return {0.0f, nullptr};
             }
 
-            auto [w, c] = makeCell(*info, name);
+            auto [w, c] = makeCell(*info, name, true);
             const float opacity = idle(key) ? 0.4f : emptySlot ? 0.45f : 1.0f;
             return {w, opacity < 1.0f ? Fade(opacity, std::move(c)) : std::move(c)};
         };
@@ -937,17 +1344,16 @@ Ptr Shell::BuildEffectPage()
         const float slotHeight = metrics::Touch() ? 36.0f : 26.0f;
         const auto& groupTitle = mTheme.Controls().groupTitle;
 
-        const auto card = [&](std::size_t index, bool pairs, float& h) -> Ptr {
+        const auto card = [&](std::size_t index, float cardWidth, float& h) -> Ptr {
             const auto& keys = kIrAbSlotKeys[index];
             const bool empty = !filled(index);
             const std::string slot = index == 0 ? "IR A" : "IR B";
 
             // The header: the slot's colour (the Alignment section's, darker on the light themes)
             // and name in the group title's letter-spaced capitals, its share, Ø.
-            const el::color key = index == 0 ? (mTheme.IsLight() ? el::rgba(40, 104, 160, 242)
-                                                                 : el::rgba(72, 168, 224, 242))
-                                             : (mTheme.IsLight() ? el::rgba(190, 96, 20, 242)
-                                                                 : el::rgba(240, 160, 64, 242));
+            const el::color key = index == 0
+                                      ? (mTheme.IsLight() ? el::rgba(40, 104, 160, 242) : el::rgba(72, 168, 224, 242))
+                                      : (mTheme.IsLight() ? el::rgba(190, 96, 20, 242) : el::rgba(240, 160, 64, 242));
             auto bar = Rounded(key, 1.5f, std::make_shared<el::element>());
             auto name = std::make_shared<SkinText>(mTheme, slot, &ControlSkin::groupTitle);
             auto share = std::make_shared<Text>(mTheme, "", metrics::Readable(10.0f), Weight::SemiBold);
@@ -956,9 +1362,10 @@ Ptr Shell::BuildEffectPage()
                 .Alignment(Text::Align::Right)
                 .Fixed(true);
             mLive.Bind(share, [shareOf, index] { return shareOf(index); }, &Text::Set);
-            std::vector<Ptr> head{Middle(FixedWidth(14, FixedHeight(3, bar))), HGap(6),
-                                  FixedWidth(MeasureControlText(slot, groupTitle) + 2.0f, Middle(FixedHeight(14, name))),
-                                  Stretch(), Middle(share)};
+            std::vector<Ptr> head{
+                Middle(FixedWidth(14, FixedHeight(3, bar))), HGap(6),
+                FixedWidth(MeasureControlText(slot, groupTitle) + 2.0f, Middle(FixedHeight(14, name))), Stretch(),
+                Middle(share)};
 
             if (const auto* invert = abParam(keys[4]))
             {
@@ -981,7 +1388,7 @@ Ptr Shell::BuildEffectPage()
                 button->onMenu = [this, key = invert->key](el::point at) {
                     if (const auto* n = SelectedNode())
                     {
-                        OpenNodeParamMidiMenu(n->type, key, at);
+                        OpenNodeParamMidiMenu(*n, key, at);
                     }
                 };
                 mLive.Bind(button, [valueOf, info = *invert] { return valueOf(info) >= 0.5; }, &PhaseButton::Set);
@@ -997,24 +1404,100 @@ Ptr Shell::BuildEffectPage()
             for (std::size_t i = 0; i < 4; ++i)
             {
                 const auto* info = abParam(keys[i]);
-                knobs.push_back(cell(keys[i], info != nullptr ? NameInSlot(info->name) : std::string(), empty));
+                auto knob = cell(keys[i], info != nullptr ? NameInSlot(info->name) : std::string(), empty);
+                knobs.push_back({knob.second ? abKnobWidths[i] : 0.0f, std::move(knob.second)});
             }
 
             std::vector<Ptr> rows{FixedHeight(kAbHeadHeight, Row(head)), VGap(8), FixedHeight(slotHeight, picker),
                                   VGap(10)};
-            h = kAbPadTop + kAbHeadHeight + 8.0f + slotHeight + 10.0f + kCellHeight + kAbPadBottom;
+            h = kAbPadTop + kAbHeadHeight + 8.0f + slotHeight + 10.0f + kAbPadBottom;
 
-            if (pairs)
+            // Level, Pan, a rule, Radial and Proximity, wrapping as the card's width leaves room
+            // (.ir-ab-slot-controls: 8 px apart, 10 px between lines, spread around each line).
+            struct Item
             {
-                // Level and Pan over the mic's Radial and Proximity.
-                rows.push_back(FixedHeight(kCellHeight, cellsRow({knobs[0], knobs[1]}, SIZE_MAX)));
-                rows.push_back(VGap(6));
-                rows.push_back(FixedHeight(kCellHeight, cellsRow({knobs[2], knobs[3]}, SIZE_MAX)));
-                h += 6.0f + kCellHeight;
+                float width;
+                Ptr element;
+            };
+
+            std::vector<Item> items;
+
+            for (std::size_t i = 0; i < knobs.size(); ++i)
+            {
+                if (i == 2)
+                {
+                    items.push_back({1.0f, FixedWidth(1, Pad(0, 2, 0, 2,
+                                                             Fill(Theme::Argb(mTheme.Controls().tabs.rule),
+                                                                  std::make_shared<el::element>())))});
+                }
+
+                if (knobs[i].second)
+                {
+                    items.push_back({knobs[i].first, knobs[i].second});
+                }
             }
-            else
+
+            const float room = cardWidth - 2.0f * kGroupPadX;
+            std::vector<std::vector<Item>> lines(1);
+            float used = 0.0f;
+
+            for (auto& item : items)
             {
-                rows.push_back(FixedHeight(kCellHeight, cellsRow(knobs, 2)));
+                const float need = (lines.back().empty() ? 0.0f : 8.0f) + item.width;
+
+                if (!lines.back().empty() && used + need > room)
+                {
+                    lines.emplace_back();
+                    used = 0.0f;
+                }
+
+                used += (lines.back().empty() ? 0.0f : 8.0f) + item.width;
+                lines.back().push_back(std::move(item));
+            }
+
+            for (std::size_t l = 0; l < lines.size(); ++l)
+            {
+                // A rule left at a line's end or start divides nothing.
+                auto& line = lines[l];
+
+                while (!line.empty() && line.back().width <= 1.0f)
+                {
+                    line.pop_back();
+                }
+
+                while (!line.empty() && line.front().width <= 1.0f)
+                {
+                    line.erase(line.begin());
+                }
+
+                if (line.empty())
+                {
+                    continue;
+                }
+
+                // space-around: half a share before the first and after the last.
+                std::vector<Ptr> row{Stretch(nullptr, 0.5)};
+
+                for (std::size_t i = 0; i < line.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        row.push_back(Stretch(nullptr, 1.0));
+                    }
+
+                    row.push_back(FixedWidth(line[i].width, line[i].element));
+                }
+
+                row.push_back(Stretch(nullptr, 0.5));
+
+                if (l > 0)
+                {
+                    rows.push_back(VGap(10));
+                    h += 10.0f;
+                }
+
+                rows.push_back(FixedHeight(kCellHeight, Row(row)));
+                h += kCellHeight;
             }
 
             rows.push_back(std::make_shared<el::element>());
@@ -1082,26 +1565,37 @@ Ptr Shell::BuildEffectPage()
         };
 
         float hA = 0.0f, hB = 0.0f, hC = 0.0f;
-        const bool four = inner >= abWidth(abKnobRow);
         Ptr cards;
 
-        if (four || inner >= abWidth(abKnobPair))
+        if (inner > kAbThreeAbreast)
         {
-            auto a = card(0, !four, hA);
-            auto b = card(1, !four, hB);
+            const float cardWidth = std::floor((inner - abCentre - 2.0f * 12.0f) * 0.5f);
+            auto a = card(0, cardWidth, hA);
+            auto b = card(1, cardWidth, hB);
             auto c = centre(false, hC);
             height = std::max({hA, hB, hC});
-            const float cardWidth = std::floor((inner - abCentre - 2.0f * kGroupGap) * 0.5f);
-            cards = Row({FixedWidth(cardWidth, a), HGap(kGroupGap), FixedWidth(abCentre, c), HGap(kGroupGap),
+            cards = Row({FixedWidth(cardWidth, a), HGap(12), FixedWidth(abCentre, c), HGap(12),
                          FixedWidth(cardWidth, b), Stretch()});
+        }
+        else if (inner > kAbTwoAbreast)
+        {
+            // The cards share a line, the blend in a row under them.
+            const float cardWidth = std::floor((inner - 12.0f) * 0.5f);
+            auto a = card(0, cardWidth, hA);
+            auto b = card(1, cardWidth, hB);
+            auto c = centre(true, hC);
+            const float cardsHeight = std::max(hA, hB);
+            height = cardsHeight + 8.0f + hC;
+            cards = Col({FixedHeight(cardsHeight,
+                                     Row({FixedWidth(cardWidth, a), HGap(12), FixedWidth(cardWidth, b), Stretch()})),
+                         VGap(8), FixedHeight(hC, c)});
         }
         else
         {
-            // Too narrow for the three abreast: IR A, the blend, IR B, one over another.
-            const bool pairs = inner < abKnobRow + 2.0f * kGroupPadX;
-            auto a = card(0, pairs, hA);
+            // IR A, the blend, IR B, one over another.
+            auto a = card(0, inner, hA);
             auto c = centre(true, hC);
-            auto b = card(1, pairs, hB);
+            auto b = card(1, inner, hB);
             height = hA + 8.0f + hC + 8.0f + hB;
             cards = Col({FixedHeight(hA, a), VGap(8), FixedHeight(hC, c), VGap(8), FixedHeight(hB, b)});
         }
@@ -1179,19 +1673,28 @@ Ptr Shell::BuildEffectPage()
         groupsWidth += groupWidth(g) + (groupsWidth > 0.0f ? kGroupGap : 0.0f);
     }
 
-    // The IR Cabinet asks for room for its two cards and the blend abreast, knobs four abreast.
+    // The graphic EQ asks for its bands in one row.
+    if (!boundary && node->type == guitarfx::EffectGuids::kEqGraphic)
+    {
+        groupsWidth = std::max(groupsWidth, GraphicEqNaturalWidth(*node));
+    }
+
+    // The IR Cabinet asks for room for its two cards side by side, as the web UI's panel gives
+    // them at its least (half the stage); a wider stage gives the blend a column between them.
     if (irAb)
     {
-        groupsWidth = std::max(groupsWidth, abWidth(abKnobRow));
+        groupsWidth = std::max(groupsWidth, kAbTwoAbreast + 1.0f);
     }
 
     // Split, the effect's artwork stands in a column left of its controls where the stage leaves
-    // the controls room beside it (the full layout always does); staged, as in the web UI's
+    // the controls room beside it (the full layout always does); narrower, it shrinks to a
+    // thumbnail beside the title, as the web UI's does at 900 px; staged, as in the web UI's
     // compact layout, it is left to the chain card.
     std::shared_ptr<artist::image> stockArt;
     std::string artUrl;
+    const bool artColumn = split && stageWidth >= 860.0f;
 
-    if (split && stageWidth >= 860.0f && !boundary && type != nullptr && layout == nullptr)
+    if (split && !boundary && type != nullptr && layout == nullptr)
     {
         stockArt = mImages.Find(mPresentation.EquipmentImage(node->type, category));
 
@@ -1208,8 +1711,13 @@ Ptr Shell::BuildEffectPage()
         }
     }
 
-    const bool hasArt = stockArt != nullptr || !artUrl.empty();
-    constexpr float kArtWidth = 300.0f, kArtGap = 12.0f, kArtMinHeight = 200.0f;
+    const bool anyArt = stockArt != nullptr || !artUrl.empty();
+    const bool hasArt = anyArt && artColumn;
+    const bool artThumb = anyArt && !artColumn;
+    // The web UI's column is minmax(220px, 300px) with a 16 px gap; 296 keeps the controls the
+    // room they had beside a 300 px column 12 px off.
+    constexpr float kArtWidth = 296.0f, kArtGap = 16.0f, kArtMinHeight = 200.0f;
+    constexpr float kThumbWidth = 52.0f, kThumbHeight = 34.0f;
     const float artRoom = hasArt ? kArtWidth + kArtGap : 0.0f;
 
     // A theme's cheeks stand either side of the panel, outside it, where the stage has room for
@@ -1218,11 +1726,11 @@ Ptr Shell::BuildEffectPage()
     const float cheek = cheekSkin > 0.0f && stageWidth - 20.0f - 2.0f * cheekSkin >= kPanelMinWidth ? cheekSkin : 0.0f;
     const float maxPanel = std::max(kPanelMinWidth, stageWidth - 20.0f - 2.0f * cheek);
     const float minPanel = split ? std::clamp((stageWidth - 20.0f) * 0.5f, kPanelMinWidth, maxPanel) : kPanelMinWidth;
-    // The live sections (the analyzer, the spatial panner) want the room too.
-    const bool wideSection = !boundary && (node->type == guitarfx::EffectGuids::kInputAnalyzer ||
-                                           node->type == guitarfx::EffectGuids::kSpatial3D ||
-                                           node->type == guitarfx::EffectGuids::kEqGraphic ||
-                                           MultibandPlot::KindOf(node->type).has_value());
+    // The spatial panner and the multi-band plots want the room too. The analyzer and the
+    // graphic EQ size as any other panel, as the web UI's do (params-panel.css: as wide as its
+    // content, at least half the stage): the analyzer's tiles wrap to the width they get.
+    const bool wideSection =
+        !boundary && (node->type == guitarfx::EffectGuids::kSpatial3D || MultibandPlot::KindOf(node->type).has_value());
     // A layout asks for its own width, or all there is when it may grow past it.
     const bool layoutGrows = layout != nullptr && layout->scaling && layout->scaling->mode != "fixed" &&
                              layout->scaling->maxScale && *layout->scaling->maxScale > 1.0;
@@ -1237,7 +1745,10 @@ Ptr Shell::BuildEffectPage()
     const float sectionInner = panelWidth - 2.0f * (kPanelPad + kSectionPad) - artRoom;
 
     // ── Header ──
-    const auto titleFont = TitleFont(12.5f);
+    // The web UI's .default-effect-shell-title (11 px, bold) and -subtitle (8 px bold capitals,
+    // 0.12 em apart).
+    constexpr float kTitleSize = 11.0f;
+    const auto titleFont = TitleFont(kTitleSize);
     const std::string titleText = NodeDisplayName(mState, *node);
     std::string kind = boundary ? std::string(node->type == guitarfx::kNodeTypeInput ? "Input" : "Output")
                                 : (type != nullptr ? type->name : node->type);
@@ -1323,9 +1834,9 @@ Ptr Shell::BuildEffectPage()
         channelsWidth += metrics::Hit(28.0f) + 8.0f;
     }
 
-    if (!IsSplitterType(node->type) && !IsMixerType(node->type))
+    // Whenever the type has params, the splitter and mixer too, as the web UI's panel has it.
     {
-        if (type != nullptr || boundary)
+        if ((type != nullptr && !type->parameters.empty()) || boundary)
         {
             auto presets = std::make_shared<IconButton>(mTheme, mIcons, "", IconButton::Look::Chip);
             presets->Size(77, 26).Label("Presets", 11.0f).Caret(true);
@@ -1357,6 +1868,14 @@ Ptr Shell::BuildEffectPage()
 
             mSession.Commands().SetNodeBypassed(nodeId, n->enabled);
         };
+        bypass->onMenu = [this, nodeId, boundary](el::point at) {
+            const auto* n = SelectedNode();
+
+            if (!boundary && n != nullptr && n->id == nodeId)
+            {
+                OpenNodeBypassMidiMenu(*n, at);
+            }
+        };
         mLive.Bind(
             bypass,
             [this, nodeId] {
@@ -1379,15 +1898,16 @@ Ptr Shell::BuildEffectPage()
     // the head of the controls at the right, hit over 44 by 36.
     const bool touchPencil = metrics::Touch() && !boundary;
     const float pencilWidth = boundary ? 0.0f : touchPencil ? metrics::Hit(20.0f) + 8.0f : 22.0f;
-    const float roomForTitle = panelWidth - 2.0f * kPanelPad - 14.0f - 8.0f - pencilWidth - rightWidth - 16.0f;
+    const float roomForTitle = panelWidth - 2.0f * kPanelPad - 14.0f - 8.0f - pencilWidth - rightWidth - 16.0f -
+                               (artThumb ? kThumbWidth + 10.0f : 0.0f);
     const float titleWidth =
         std::clamp(MeasureTextWidth(titleText, titleFont) + 2.0f, 40.0f, std::max(40.0f, roomForTitle));
 
     auto led = std::make_shared<HeaderLed>(node->enabled, false);
-    auto title = std::make_shared<Text>(mTheme, titleText, 12.5f, Weight::Title);
+    auto title = std::make_shared<Text>(mTheme, titleText, kTitleSize, Weight::Title);
     title->Colour(mTheme.EffectTitleInk());
-    auto subtitle = std::make_shared<Text>(mTheme, subtitleText, metrics::Readable(9.0f, 10.0f), Weight::SemiBold);
-    subtitle->Colour(mTheme.TextMuted()).Fixed(true);
+    auto subtitle = std::make_shared<Text>(mTheme, subtitleText, metrics::Readable(8.0f, 10.0f), Weight::SemiBold);
+    subtitle->Colour(mTheme.TextMuted()).Fixed(true).Tracking(0.12f);
 
     // The titles (.default-effect-shell-titles): the name, and under it the kind and the badge.
     std::vector<Ptr> titleRow{FixedWidth(titleWidth, title)};
@@ -1419,8 +1939,77 @@ Ptr Shell::BuildEffectPage()
     }
 
     subtitleRow.push_back(Stretch());
-    std::vector<Ptr> header{Middle(led), HGap(8),
-                            Col({FixedHeight(20, Row(titleRow)), FixedHeight(14, Row(subtitleRow)), VGap(2)})};
+    std::vector<Ptr> header{Middle(led), HGap(8)};
+
+    if (artThumb)
+    {
+        auto thumb = std::make_shared<ArtworkPanel>(mTheme, [this, artUrl] { return RemoteImage(artUrl); }, stockArt);
+        header.push_back(Middle(Sized(kThumbWidth, kThumbHeight, thumb)));
+        header.push_back(HGap(10));
+    }
+
+    auto titles = Col({FixedHeight(20, Row(titleRow)), FixedHeight(14, Row(subtitleRow)), VGap(2)});
+
+    // The node's peak rail between the titles and the controls (.default-effect-shell-rail),
+    // where the stage is wider than the web UI's 900 px (the artwork's column rule); a tap
+    // shows or hides the DSP status. Narrower, the header keeps its two sides only.
+    if (!boundary && split && stageWidth >= 860.0f)
+    {
+        const auto subtitleFont = Font(Weight::SemiBold).size(metrics::Readable(8.0f, 10.0f));
+        std::size_t glyphs = 0;
+
+        for (const unsigned char ch : subtitleText)
+        {
+            glyphs += (ch & 0xC0) != 0x80 ? 1 : 0;
+        }
+
+        float subtitleWidth =
+            MeasureTextWidth(subtitleText, subtitleFont) + 0.12f * subtitleFont._size * static_cast<float>(glyphs);
+
+        if (!badgeText.empty())
+        {
+            subtitleWidth += 6.0f + MeasureTextWidth(badgeText, Font(Weight::SemiBold).size(8.0f)) + 12.0f;
+        }
+
+        const float titlesWidth =
+            std::min(std::max(titleWidth + (touchPencil || boundary ? 0.0f : 22.0f), subtitleWidth) + 2.0f,
+                     std::max(40.0f, roomForTitle + (touchPencil || boundary ? 0.0f : 22.0f)));
+        auto rail = std::make_shared<PeakRail>();
+        rail->onClick = [this] {
+            mShowDspStatus = !mShowDspStatus;
+            mEffectSignature.clear();
+            Mark(kPage);
+        };
+        mLive.Bind(
+            rail,
+            [this, nodeId] {
+                PeakRail::Reading reading;
+                const auto it = mState.telemetry.nodes.find(mState.activePresetId + "::" + nodeId);
+
+                if (it == mState.telemetry.nodes.end() || it->second.channelCount <= 0 ||
+                    !std::isfinite(it->second.peakDb))
+                {
+                    return reading;
+                }
+
+                const double peak = it->second.peakDb;
+                reading.inactive = false;
+                reading.clipped = it->second.clipped || peak >= -0.3;
+                reading.hundredths = static_cast<int>(std::lround(std::clamp((peak + 48.0) / 48.0, 0.0, 1.0) * 100.0));
+                reading.peakTenths = static_cast<int>(std::lround(peak * 10.0));
+                reading.headroomTenths = static_cast<int>(std::lround(-peak * 10.0));
+                return reading;
+            },
+            &PeakRail::Set);
+        header.push_back(FixedWidth(titlesWidth, titles));
+        header.push_back(HGap(8));
+        header.push_back(Stretch(Middle(rail)));
+        header.push_back(HGap(16));
+    }
+    else
+    {
+        header.push_back(titles);
+    }
 
     for (auto& r : rightSide)
     {
@@ -1462,11 +2051,23 @@ Ptr Shell::BuildEffectPage()
         return t;
     };
 
+    // The DSP status floats in the controls' top right corner, over them, as the web UI's
+    // .effect-dsp-status does: it takes no room of its own. Clicks where it has no tile reach
+    // what is under it (Elements hands a click only to an element that wants it).
+    Ptr dspStatus;
+
     if (mShowDspStatus && !boundary)
     {
-        addToSection(BuildDspStatus(guitarfx::uiclient::EffectDspStatus(), mState.activePresetId + "::" + node->id,
-                                    {"preset", node->id, mState.activePresetId}, false),
-                     40.0f);
+        dspStatus = BuildDspStatus(guitarfx::uiclient::EffectDspStatus(), mState.activePresetId + "::" + node->id,
+                                   {"preset", node->id, mState.activePresetId}, false);
+    }
+
+    if (!boundary && ShowsFullRigCabNote(mState, *node))
+    {
+        auto note = std::make_shared<Text>(mTheme, "Signal chain already includes a Cabinet Model (a \"Full Rig\").",
+                                           metrics::kSmallText);
+        note->Colour(mTheme.TextSecondary());
+        addToSection(Middle(note), 18.0f);
     }
 
     if (hasSlots && !layoutPlacesSlots)
@@ -1485,6 +2086,21 @@ Ptr Shell::BuildEffectPage()
             addToSection(BuildIrList(*node), mShowIrList ? 318.0f : 29.0f);
             addToSection(BuildResourceSlot(*node, rt, 1, "IR B", true, true), StackedSlot());
         }
+        else if (!exposedSlots.empty())
+        {
+            for (const auto& slot : exposedSlots)
+            {
+                if (slot.resourceType == "plugin")
+                {
+                    continue;
+                }
+
+                addToSection(BuildResourceSlot(*node, slot.resourceType, slot.resourceIndex,
+                                               slot.displayName.empty() ? slot.resourceId : slot.displayName, false,
+                                               true, slot.allowBrowseFile),
+                             StackedSlot());
+            }
+        }
         else
         {
             addToSection(BuildResourceSlot(*node, rt, -1,
@@ -1498,12 +2114,43 @@ Ptr Shell::BuildEffectPage()
 
     if (hasPlugin)
     {
-        addToSection(BuildPluginHost(*node), 28.0f + 8.0f + 168.0f);
+        addToSection(BuildPluginHost(*node), PluginHostHeight(*node));
+    }
+
+    // The web's Custom Effect Designer block (Design With AI, Save To My Custom Effects, Use This
+    // Effect) lives in Soundshed Guitar; here, a note says so.
+    if (node->type == guitarfx::EffectGuids::kWasmHost && IsFeatureEnabled(mState, Feature::CustomEffects))
+    {
+        auto designer = std::make_shared<Paragraph>(
+            mTheme,
+            "Custom Effects are designed in Soundshed Guitar: Design With AI, Save To My Custom Effects and Use "
+            "This Effect are on this node there.",
+            420.0f, 12.0f);
+        designer->Colour(mTheme.TextSecondary());
+        addToSection(Pad(4, 6, 4, 6, designer), 48.0f);
     }
 
     if (node->type == guitarfx::EffectGuids::kAmpNamBlend)
     {
-        addToSection(BuildBlendInfo(*node), 46.0f);
+        const auto blendId = node->config.find("blendId");
+
+        if (blendId != node->config.end() && !blendId->second.empty())
+        {
+            addToSection(BuildBlendInfo(*node), 46.0f);
+        }
+        else
+        {
+            // A blend node from before blend definitions: its models as slots of their own
+            // (resourceSelector.ts), Model 1 at least.
+            const std::size_t count = std::max<std::size_t>(1, node->resources.size());
+
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                addToSection(
+                    BuildResourceSlot(*node, "nam", static_cast<int>(i), "Model " + std::to_string(i + 1), true, true),
+                    StackedSlot());
+            }
+        }
     }
 
     // The visualisations, above the tabs and the knobs, in the web UI's order (panel.ts): the
@@ -1539,8 +2186,7 @@ Ptr Shell::BuildEffectPage()
     }
 
     // The gates' learn meters, in a card under a card title as gateLearn.ts lays them out.
-    const auto addGateLearn = [&](GateLearnTarget target, const char* titleText)
-    {
+    const auto addGateLearn = [&](GateLearnTarget target, const char* titleText) {
         const float pad = mTheme.Controls().cardPadding;
         const float learn = GateLearnHeight(target);
         auto title = std::make_shared<SkinText>(mTheme, titleText, &ControlSkin::cardTitle);
@@ -1567,20 +2213,169 @@ Ptr Shell::BuildEffectPage()
         addToSection(BuildMultibandPlot(*node), ResponsePlot::CardHeight(mTheme, MultibandPlot::kPlotHeight));
     }
 
+    // The mixer's Input Channels (mixerInput.ts): each connected input's Level, Pan and Delay,
+    // and its mute, named for the effect that feeds it.
+    if (IsMixerType(node->type) && mState.activePreset)
+    {
+        const auto& graph = mState.activePreset->graph;
+        std::vector<int> ports;
+
+        for (const auto& edge : graph.edges)
+        {
+            if (edge.to == node->id && std::find(ports.begin(), ports.end(), edge.toPort) == ports.end())
+            {
+                ports.push_back(edge.toPort);
+            }
+        }
+
+        std::sort(ports.begin(), ports.end());
+        auto title = std::make_shared<Text>(mTheme, "INPUT CHANNELS", 11.0f, Weight::SemiBold);
+        title->Colour(mTheme.TextSecondary()).Tracking(0.05f).Fixed(true);
+        std::vector<Ptr> column{FixedHeight(14, title), VGap(12)};
+        float columnHeight = 14.0f + 12.0f;
+        constexpr float kGroupHead = 16.0f;
+
+        if (ports.empty())
+        {
+            auto none = std::make_shared<Text>(
+                mTheme, "No inputs connected. Connect effects to the mixer to control per-input levels.",
+                metrics::kSmallText);
+            none->Colour(mTheme.TextMuted());
+            column.push_back(FixedHeight(16, none));
+            columnHeight += 16.0f;
+        }
+
+        for (std::size_t p = 0; p < ports.size(); ++p)
+        {
+            const int port = ports[p];
+            const auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const guitarfx::GraphEdge& e) {
+                return e.to == node->id && e.toPort == port;
+            });
+            const auto* source = edge != graph.edges.end() ? graph.FindNode(edge->from) : nullptr;
+            const auto* sourceType = source != nullptr ? mState.FindEffectType(source->type) : nullptr;
+            const std::string inputName = sourceType != nullptr && !sourceType->name.empty() ? sourceType->name
+                                          : source != nullptr ? source->type
+                                                              : "Input " + std::to_string(port + 1);
+            const std::string n = std::to_string(port);
+
+            EffectParamInfo level;
+            level.key = "level_" + n;
+            level.name = "Level";
+            level.unit = "dB";
+            level.minValue = -60.0;
+            level.maxValue = 12.0;
+            EffectParamInfo pan;
+            pan.key = "pan_" + n;
+            pan.name = "Pan";
+            pan.unit = "pan";
+            pan.minValue = -1.0;
+            pan.maxValue = 1.0;
+            EffectParamInfo delay;
+            delay.key = "delay_" + n;
+            delay.name = "Delay";
+            delay.unit = "ms";
+            delay.minValue = 0.0;
+            delay.maxValue = 60.0;
+
+            auto name = std::make_shared<Text>(mTheme, inputName, 11.0f, Weight::SemiBold);
+            name->Colour(mTheme.Ink());
+            auto mute = std::make_shared<MuteSwitch>(mTheme);
+            mute->AccessName("Mute " + inputName);
+            const std::string muteKey = "mute_" + n;
+            const auto muted = [this, nodeId, muteKey] {
+                const auto* m = mState.activePreset ? mState.activePreset->graph.FindNode(nodeId) : nullptr;
+
+                if (m == nullptr)
+                {
+                    return false;
+                }
+
+                const auto it = m->params.find(muteKey);
+                return it != m->params.end() && it->second >= 0.5;
+            };
+            mLive.Bind(mute, muted, &MuteSwitch::Set);
+            mute->onClick = [this, nodeId, muteKey, muted] {
+                mSession.Commands().SetNodeParam(nodeId, muteKey, muted() ? 0.0 : 1.0);
+                NoteChainEdit();
+                Mark(kValues);
+            };
+            auto state = std::make_shared<Text>(mTheme, "", 9.0f);
+            state->Colour(mTheme.TextMuted()).Fixed(true);
+            mLive.Bind(state, [muted] { return std::string(muted() ? "Muted" : "Active"); }, &Text::Set);
+
+            std::vector<Ptr> knobs{Stretch(nullptr, 0.5)};
+            bool first = true;
+
+            for (const auto* info : {&level, &pan, &delay})
+            {
+                auto [w, c] = makeCell(*info, info->name);
+
+                if (!first)
+                {
+                    knobs.push_back(Stretch(nullptr, 1.0));
+                }
+
+                knobs.push_back(FixedWidth(std::max(w, 54.0f), c));
+                first = false;
+            }
+
+            knobs.push_back(Stretch(nullptr, 0.5));
+            auto rule = FixedHeight(1, Fill(Theme::Argb(mTheme.Controls().tabs.rule), std::make_shared<el::element>()));
+            auto group =
+                Col({FixedHeight(kGroupHead,
+                                 Row({Middle(name), HGap(8), Middle(mute), HGap(8), FixedWidth(36, Middle(state))})),
+                     VGap(8), rule, VGap(10), FixedHeight(kCellHeight, Row(knobs))});
+            const float groupHeight = 10.0f + kGroupHead + 8.0f + 1.0f + 10.0f + kCellHeight + 10.0f;
+
+            if (p > 0)
+            {
+                column.push_back(VGap(12));
+                columnHeight += 12.0f;
+            }
+
+            column.push_back(
+                FixedHeight(groupHeight, Over(Pad(10, 10, 10, 10, group),
+                                              Rounded(mTheme.Card(), 8.0f, std::make_shared<el::element>()))));
+            columnHeight += groupHeight;
+        }
+
+        column.push_back(std::make_shared<el::element>());
+        addToSection(Over(Pad(12, 12, 12, 12, Col(column)), std::make_shared<InsetBox>(mTheme)), columnHeight + 24.0f);
+    }
+
     if (IsSplitterType(node->type))
     {
-        addToSection(BuildSplitBranches(*node), 96.0f);
+        // A line more when the splitter's mode routes the branches (BuildSplitBranches).
+        int outgoing = 0;
+
+        for (const auto& edge : mState.activePreset->graph.edges)
+        {
+            outgoing += edge.from == node->id ? 1 : 0;
+        }
+
+        const bool routed = !guitarfx::uiclient::DescribeSplitRouting(*node, outgoing).empty();
+        addToSection(BuildSplitBranches(*node), routed ? 114.0f : 96.0f);
     }
 
     // The tabs (.node-param-tabs): on their own line, with a rule under them across the section.
-    if (auto t = tabs())
+    // A backdrop layout draws them on itself, above its controls, as the web UI's backdrop takes
+    // the params panel's markup tabs and all.
+    // Touch sizes give the tabs a 40 px row to be hit in.
+    const float tabRow = metrics::Touch() ? 40.0f : 28.0f;
+    auto tabLine = [&]() -> Ptr {
+        auto t = tabs();
+        return t ? Col({FixedHeight(tabRow, Row({t, Stretch()})),
+                        FixedHeight(1,
+                                    Fill(Theme::Argb(mTheme.Controls().tabs.rule), std::make_shared<el::element>()))})
+                 : nullptr;
+    };
+
+    if (!backdrop)
     {
-        // Touch sizes give the tabs a 40 px row to be hit in.
-        const float tabRow = metrics::Touch() ? 40.0f : 28.0f;
-        addToSection(
-            Col({FixedHeight(tabRow, Row({t, Stretch()})),
-                 FixedHeight(1, Fill(Theme::Argb(mTheme.Controls().tabs.rule), std::make_shared<el::element>()))}),
-            tabRow + 1.0f);
+        if (auto line = tabLine())
+        {
+            addToSection(line, tabRow + 1.0f);
+        }
     }
 
     // The groups, laid into rows as they fit `inner`, each row handed to `add`.
@@ -1651,14 +2446,78 @@ Ptr Shell::BuildEffectPage()
         const float roomBelow = std::max(0.0f, stageHeight - above - 8.0f);
         Ptr standard;
         el::extent standardSize{0.0f, 0.0f};
+        float controlsFit = 1.0f;
 
         if (backdrop)
         {
             // The standard controls, wrapped at the layout's own width as the web UI's backdrop
-            // wraps them, and placed on it by the layout's offset and scale.
-            const float inner = layoutWidth;
+            // wraps them, and placed on it by the layout's offset and scale. A layout with a
+            // controls area wraps them at its width instead, and shrinks them, keeping the
+            // scale's shape, until they are no taller than it (layoutControlsArea.ts).
+            float inner = layoutWidth;
+
+            if (layout->defaultControlsArea)
+            {
+                const auto positive = [](double v) {
+                    return std::isfinite(v) && v > 0.0 ? static_cast<float>(v) : 1.0f;
+                };
+                const float scaleX = positive(layout->defaultControlsScale.x);
+                const float scaleY = positive(layout->defaultControlsScale.y);
+                const float areaW = static_cast<float>(layout->defaultControlsArea->width);
+                const float areaH = static_cast<float>(layout->defaultControlsArea->height);
+
+                // layRows' wrapping, measured without building anything.
+                const auto heightAt = [&](float width) {
+                    float total = 0.0f, used = 0.0f, rowHeight = 0.0f;
+                    bool any = false;
+
+                    for (const auto& g : groups)
+                    {
+                        const float w = std::min(groupWidth(g), width);
+
+                        if (any && used + kGroupGap + w > width)
+                        {
+                            total += rowHeight + 8.0f;
+                            used = 0.0f;
+                            rowHeight = 0.0f;
+                            any = false;
+                        }
+
+                        used += (any ? kGroupGap : 0.0f) + w;
+                        rowHeight = std::max(rowHeight, groupHeight(g));
+                        any = true;
+                    }
+
+                    return total + rowHeight + (anyAdvanced ? tabRow + 1.0f + 8.0f : 0.0f);
+                };
+                const auto drawnHeight = [&](float fit) { return heightAt(areaW / (scaleX * fit)) * scaleY * fit; };
+
+                if (drawnHeight(1.0f) > areaH)
+                {
+                    float low = 0.2f, high = 1.0f;
+
+                    for (int step = 0; step < 8; ++step)
+                    {
+                        const float mid = 0.5f * (low + high);
+                        (drawnHeight(mid) <= areaH ? low : high) = mid;
+                    }
+
+                    controlsFit = low;
+                }
+
+                controlsFit = std::floor(controlsFit * 10000.0f) / 10000.0f;
+                inner = areaW / (scaleX * controlsFit);
+            }
+
             std::vector<Ptr> rows;
             float rowsHeight = 0.0f;
+
+            if (auto line = tabLine())
+            {
+                rows.push_back(FixedHeight(tabRow + 1.0f, line));
+                rowsHeight += tabRow + 1.0f;
+            }
+
             layRows(inner, [&rows, &rowsHeight](Ptr r, float h) {
                 if (!rows.empty())
                 {
@@ -1674,7 +2533,8 @@ Ptr Shell::BuildEffectPage()
         }
 
         float layoutHeight = 0.0f;
-        auto drawn = BuildEffectLayout(*node, *layout, sectionInner, roomBelow, standard, standardSize, layoutHeight);
+        auto drawn = BuildEffectLayout(*node, *layout, sectionInner, roomBelow, standard, standardSize, layoutHeight,
+                                       controlsFit);
         addToSection(drawn, layoutHeight);
     }
     else
@@ -1712,6 +2572,13 @@ Ptr Shell::BuildEffectPage()
     Ptr sectionElement = Over(Pad(kSectionPad, kSectionPad, kSectionPad, kSectionPad, Col(section)),
                               std::make_shared<SkinBox>(mTheme, &ControlSkin::section));
 
+    if (dspStatus)
+    {
+        sectionElement = Over(
+            el::share(el::align_top(el::align_right(el::margin({0.0f, 2.0f, 2.0f, 0.0f}, el::hold_any(dspStatus))))),
+            sectionElement);
+    }
+
     if (hasArt)
     {
         auto art = std::make_shared<ArtworkPanel>(mTheme, [this, artUrl] { return RemoteImage(artUrl); }, stockArt);
@@ -1742,7 +2609,7 @@ Ptr Shell::BuildEffectPage()
         stage = Col({placed, std::make_shared<el::element>()});
     }
 
-    return Over(stage, std::make_shared<EffectBackdrop>(mTheme, panelHeight + 120.0f));
+    return Over(stage, std::make_shared<EffectBackdrop>(mTheme, mState.appSettings, panelHeight + 120.0f));
 }
 
 void Shell::SyncEffectValues()

@@ -23,10 +23,6 @@ using cycfi::artist::canvas;
 
 // ── Turning a knob or slider from the keyboard ─────────────────────────────────
 
-namespace
-{
-/// Where an arrow, Page Up or Down, Home or End takes a control at `value` (0..1): a hundredth a
-/// step (a thousandth with Shift), or one position of `steps`, and a tenth a page.
 std::optional<double> KeyedPosition(const el::key_info& k, double value, int steps)
 {
     using el::key_code;
@@ -82,7 +78,6 @@ bool IsResetKey(const el::key_info& k)
 {
     return k.action == el::key_action::press && (k.key == el::key_code::_delete || k.key == el::key_code::backspace);
 }
-} // namespace
 
 // ── ParamSlider ─────────────────────────────────────────────────────────────────
 
@@ -111,6 +106,13 @@ void ParamSlider::draw(const el::context& ctx)
     FillText(cnv, Ellipsize(cnv, mName, nameFont, nameBounds.width()), nameFont, mTheme.TextSecondary(), nameBounds,
              Text::Align::Left);
     FillText(cnv, mValueText, nameFont, mTheme.Text(), top, Text::Align::Right);
+    mValueLeft = top.right - valueWidth;
+
+    if (onEditValue)
+    {
+        cnv.fill_style(mTheme.TextSecondary().opacity(0.6f));
+        cnv.fill_rect(el::rect{mValueLeft, top.bottom - 2.0f, top.right, top.bottom - 1.0f});
+    }
 
     // The track, with the travel filled in the accent: the one place an effect page uses it.
     const float trackY = b.bottom - 14.0f;
@@ -159,6 +161,12 @@ bool ParamSlider::click(const el::context& ctx, el::mouse_button btn)
 
     if (btn.down)
     {
+        if (onEditValue && btn.pos.y < ctx.bounds.top + 20.0f && btn.pos.x >= mValueLeft - 4.0f)
+        {
+            onEditValue();
+            return true;
+        }
+
         if (btn.num_clicks == 2 && onReset)
         {
             onReset();
@@ -225,6 +233,12 @@ bool ParamSlider::scroll(const el::context& ctx, el::point dir, el::point)
 
 bool ParamSlider::key(const el::context& ctx, el::key_info k)
 {
+    if (onEditValue && k.key == el::key_code::enter && k.action == el::key_action::press)
+    {
+        onEditValue();
+        return true;
+    }
+
     if (IsResetKey(k) && onReset)
     {
         onReset();
@@ -296,6 +310,10 @@ constexpr float kLargeCellWidth = 74.0f;
 constexpr float kLargeNameHeight = 13.0f;
 constexpr float kLargeValueHeight = 15.0f;
 constexpr float kLargeDiameter = 40.0f;
+// The control bar's (.control-bar .knob-control): 38 px, the value 12 px tall 4 px under it.
+constexpr float kBarDiameter = 38.0f;
+constexpr float kBarValueGap = 4.0f;
+constexpr float kBarValueHeight = 12.0f;
 constexpr float kKnobDragPixels = 200.0f;
 } // namespace
 
@@ -311,15 +329,38 @@ el::view_limits ParamKnob::limits(const el::basic_context&) const
     }
 
     const float w = mCellWidth > 0.0f ? mCellWidth : (mLarge ? kLargeCellWidth : kKnobCellWidth);
-    const float h = mLarge ? kLargeNameHeight + kLargeDiameter + kLargeValueHeight + 4.0f
-                           : kKnobNameHeight + kKnobDiameter + kKnobValueHeight + 4.0f;
+    const auto g = Layout();
+    const float h = g.name + g.nameGap + g.diameter + g.valueGap + g.value;
     return {{w, h}, {w, h}};
+}
+
+ParamKnob::Geometry ParamKnob::Layout() const
+{
+    if (mBar)
+    {
+        return {0.0f, 0.0f, kBarDiameter, kBarValueGap, kBarValueHeight};
+    }
+
+    if (mLarge)
+    {
+        return {kLargeNameHeight, 2.0f, kLargeDiameter, 2.0f, kLargeValueHeight};
+    }
+
+    return {kKnobNameHeight, 2.0f, kKnobDiameter, 2.0f, kKnobValueHeight};
 }
 
 void ParamKnob::draw(const el::context& ctx)
 {
     NoteDrawn(ctx);
     auto& cnv = ctx.canvas;
+    // At the web's .45 while what it sets is off.
+    std::optional<cycfi::artist::canvas::group> dim;
+
+    if (mDimmed)
+    {
+        dim.emplace(cnv, 0.45f);
+    }
+
     const auto b = ctx.bounds;
     // The web UI's .node-param-label and .node-param-value, in the theme's ink, case and spacing:
     // the effect editor's a size up, the control bar's value a size down.
@@ -327,21 +368,44 @@ void ParamKnob::draw(const el::context& ctx)
     const float labelSize = metrics::Readable(skin.label.size + (mLarge ? 1.0f : 0.0f));
     const float valueSize = skin.value.size + (mLarge ? 1.0f : -1.0f);
     const auto valueFont = ControlFont(skin.value, valueSize);
-    const float nameHeight = mLarge ? kLargeNameHeight : kKnobNameHeight;
-    const float valueHeight = mLarge ? kLargeValueHeight : kKnobValueHeight;
+    const auto g = Layout();
+    const float nameHeight = g.name;
+    const float valueHeight = g.value;
 
     const auto nameBounds = el::rect{b.left, b.top, b.right, b.top + nameHeight};
 
-    if (mBare <= 0.0f)
+    if (mBare <= 0.0f && nameHeight > 0.0f)
     {
         DrawControlText(cnv, mName, skin.label, nameBounds, HAlign::Centre, labelSize);
     }
 
-    const float diameter = mBare > 0.0f ? mBare : (mLarge ? kLargeDiameter : kKnobDiameter);
+    const float diameter = mBare > 0.0f ? mBare : g.diameter;
     const float cx = (b.left + b.right) * 0.5f;
-    const float cy = mBare > 0.0f ? (b.top + b.bottom) * 0.5f : nameBounds.bottom + 2.0f + diameter * 0.5f;
+    const float cy = mBare > 0.0f ? (b.top + b.bottom) * 0.5f : nameBounds.bottom + g.nameGap + diameter * 0.5f;
     const float v = static_cast<float>(std::clamp(mValue, 0.0, 1.0));
     DrawKnob(cnv, mTheme, el::point{cx, cy}, diameter, v);
+
+    // The marks on the knob's ring, over its 270 degrees of travel (.knob-mapped-point): a
+    // grey dot, the accent with a glow where the other knobs reach it, green where it is on it.
+    for (const auto& mark : mMarks)
+    {
+        const float angle =
+            (static_cast<float>(std::clamp(mark.position, 0.0, 1.0)) * 270.0f - 135.0f) * 3.14159265f / 180.0f;
+        const float r = diameter * 0.5f - 2.0f;
+        const el::point at{cx + r * std::sin(angle), cy - r * std::cos(angle)};
+        const float dot = mark.selected ? 2.3f : 2.0f;
+
+        if (mark.selectable && !mark.selected)
+        {
+            cnv.fill_style(mTheme.Accent().opacity(0.45f));
+            cnv.fill_round_rect({at.x - 4.0f, at.y - 4.0f, at.x + 4.0f, at.y + 4.0f}, 4.0f);
+        }
+
+        cnv.fill_style(mark.selected     ? el::rgba(80, 184, 120, 255)
+                       : mark.selectable ? mTheme.Accent()
+                                         : el::rgba(107, 107, 124, 179));
+        cnv.fill_round_rect({at.x - dot, at.y - dot, at.x + dot, at.y + dot}, dot);
+    }
 
     if (mBare > 0.0f)
     {
@@ -354,14 +418,23 @@ void ParamKnob::draw(const el::context& ctx)
         return;
     }
 
-    const auto valueBounds = el::rect{b.left, b.bottom - valueHeight, b.right, b.bottom};
+    const auto valueBounds = el::rect{b.left, b.bottom - valueHeight, b.right - mValueInset, b.bottom};
     DrawControlText(cnv, mValueText, skin.value, valueBounds, HAlign::Centre, valueSize);
+}
+
+void ParamKnob::SetMarks(std::vector<Mark> marks)
+{
+    if (marks != mMarks)
+    {
+        mMarks = std::move(marks);
+        RepaintSoon(DrawnArea());
+    }
 }
 
 el::rect ParamKnob::ValueBox(const el::rect& b) const
 {
-    const float valueHeight = mLarge ? kLargeValueHeight : kKnobValueHeight;
-    return el::rect{b.left + 1.0f, b.bottom - valueHeight - 2.0f, b.right - 1.0f, b.bottom + 1.0f};
+    const float valueHeight = Layout().value;
+    return el::rect{b.left + 1.0f, b.bottom - valueHeight - 2.0f, b.right - 1.0f - mValueInset, b.bottom + 1.0f};
 }
 
 void ParamKnob::BeginEdit(std::string text)
@@ -496,6 +569,7 @@ AccessInfo ParamKnob::Describe() const
     info.name = NameOr(mName);
     info.value = mEdit.Active() ? mEdit.Value() : mValueText;
     info.position = mValue;
+    info.steps = mKeySteps;
     return info;
 }
 
@@ -514,6 +588,12 @@ bool ParamKnob::SetPosition(double normalised)
 
 bool ParamKnob::click(const el::context& ctx, el::mouse_button btn)
 {
+    // Off, the pointer passes it by (pointer-events: none), as the web's.
+    if (mDimmed && !mDragging)
+    {
+        return false;
+    }
+
     if (btn.state == el::mouse_button::right && onMenu)
     {
         if (btn.down)
@@ -536,7 +616,7 @@ bool ParamKnob::click(const el::context& ctx, el::mouse_button btn)
             mDragging = false;
 
             if (editText && onTyped && mBare <= 0.0f &&
-                btn.pos.y >= ctx.bounds.bottom - (mLarge ? kLargeValueHeight : kKnobValueHeight) - 2.0f)
+                btn.pos.y >= ctx.bounds.bottom - Layout().value - 2.0f)
             {
                 // The value turns into a field where it is; the knob takes focus for the keys
                 // once this click is done with.
@@ -638,7 +718,7 @@ bool ParamKnob::cursor(const el::context& ctx, el::point, el::cursor_tracking st
 
 bool ParamKnob::scroll(const el::context& ctx, el::point dir, el::point)
 {
-    if (dir.y == 0.0f || !mHover || !sWheelAdjusts)
+    if (dir.y == 0.0f || !mHover || !sWheelAdjusts || mDimmed)
     {
         return false;
     }

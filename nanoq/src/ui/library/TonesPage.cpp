@@ -4,9 +4,11 @@
 // Pack, the Cards / List switch and a help card (chips across the top at the compact size); a
 // search with a tag filter; then the tones, as cards or as rows - the latest packs in a strip that
 // scrolls sideways over the community presets - each with Preview, Install and Share, a pack with
-// Open for its presets. Installed lists what this profile has installed, each with a way to remove
-// it; My Content, the account's own presets and packs. A tone a link opened the page on sits over
-// the rest. Previews, a pack's own view and links are TonePreview.cpp's.
+// Open for its presets. The search runs as it is typed (250 ms after the last key). Installed lists
+// what this profile has installed, each with a way to remove it; My Content, the account's own
+// presets and packs, with their moderation state and a way to delete them. A tone a link opened
+// the page on sits over the rest. The account is one dialog: signing in, then the profile.
+// Previews, a pack's own view and links are TonePreview.cpp's.
 //
 // The requests, the account, previewing and installing are the shared ToneService's
 // (core/src/uiclient/ToneService.h); both fetch the Tone3000 models a preset names from Soundshed's
@@ -17,6 +19,8 @@
 #include "ui/shell/Shell.h"
 
 #include "ui/library/ToneCard.h"
+
+#include "uiclient/FeatureFlags.h"
 
 #include <elements/support/text_utils.hpp>
 
@@ -35,6 +39,7 @@ namespace
 Ptr SectionTitle(const Theme& theme, const std::string& text)
 {
     auto t = std::make_shared<Text>(theme, Upper(text), 9.5f, Weight::SemiBold);
+    t->AccessHeading(2); // a section title, to a screen reader
     t->Colour(theme.TextSecondary());
     return FixedHeight(26, Pad(2, 10, 0, 2, t));
 }
@@ -42,11 +47,25 @@ Ptr SectionTitle(const Theme& theme, const std::string& text)
 
 std::string Shell::TonesPageSignature() const
 {
+    const auto section = ResolveTonesSection(mTonesSection);
+    const std::string head = std::to_string(static_cast<int>(section)) + (TonesSectionOn(TonesSection::Community) ? "c" : "") +
+                             (TonesSectionOn(TonesSection::Tone3000) ? "t" : "") + "#";
+
+    if (section == TonesSection::Local)
+    {
+        return head + TonesLocalSignature();
+    }
+
+    if (section == TonesSection::Tone3000)
+    {
+        return head + TonesTone3000Signature();
+    }
+
     const auto& service = mSession.Tones();
-    std::string s = std::to_string(static_cast<int>(mTonesTab)) + "|" + mTonesQuery + "|" + mTonesTag + "|" +
+    std::string s = head + std::to_string(static_cast<int>(mTonesTab)) + "|" + mTonesQuery + "|" + mTonesTag + "|" +
                     std::to_string(mTonesPage) + "|" + (mTonesMore ? "m" : "") + (mTonesLoading ? "l" : "") + "|" +
                     mTonesError + "|" + std::to_string(mToneItems.size()) + "/" + std::to_string(mTonePacks.size()) +
-                    "/" + std::to_string(mToneHomePacks.size()) + "/" + std::to_string(mToneMine.size()) + "/" +
+                    "/" + std::to_string(mToneHomeRows.size()) + "/" + std::to_string(mToneMine.size()) + "/" +
                     std::to_string(mToneMinePacks.size()) + (mTonesList ? "L" : "") + (mWide ? "W" : "") + "|" +
                     (service.Account() ? service.Account()->Label() : std::string()) +
                     (service.HasSession() ? "s" : "") + "|" + std::to_string(static_cast<int>(ViewSize().x / 32.0f)) +
@@ -64,15 +83,24 @@ std::string Shell::TonesPageSignature() const
         s += "|t" + id + std::to_string(static_cast<int>(install.status));
     }
 
-    for (const auto* list : {&mToneItems, &mTonePacks, &mToneHomePacks, &mToneMine, &mToneMinePacks})
-    {
-        for (const auto& tone : *list)
+    const auto downloading = [&](const std::vector<tones::Tone>& list) {
+        for (const auto& tone : list)
         {
             if (service.IsDownloading(tones::EntryIdFor(tone)))
             {
                 s += "|d" + tone.id;
             }
         }
+    };
+
+    for (const auto* list : {&mToneItems, &mTonePacks, &mToneMine, &mToneMinePacks})
+    {
+        downloading(*list);
+    }
+
+    for (const auto& row : mToneHomeRows)
+    {
+        downloading(row.tones);
     }
 
     return s;
@@ -111,7 +139,8 @@ void Shell::LoadTones(bool more)
 
         if (!response.ok)
         {
-            mTonesError = response.error.empty() ? std::string("Tone sharing could not be reached") : response.error;
+            mTonesError = "Load failed: " +
+                          (response.error.empty() ? std::string("tone sharing could not be reached") : response.error);
             Mark(kPage);
             return true;
         }
@@ -127,29 +156,28 @@ void Shell::LoadTones(bool more)
         if (!more)
         {
             mToneItems.clear();
-            mToneHomePacks.clear();
+            mToneHomeRows.clear();
         }
 
         if (home)
         {
-            // The featured page's pack rows become the row of latest packs over the presets.
+            // The featured page's pack rows, each a strip over the presets, as the web's
+            // featuredPackRows: its preset rows are left out, as Presets lists those itself.
             service.Get("/home", [this, generation](const tones::Response& response) {
                 if (generation != mTonesGeneration || !response.ok)
                 {
                     return;
                 }
 
-                mToneHomePacks.clear();
+                mToneHomeRows.clear();
 
-                for (const auto& row : tones::ParseHome(response.data))
+                for (auto row : tones::ParseHome(response.data))
                 {
-                    for (const auto& tone : row.tones)
+                    std::erase_if(row.tones, [](const tones::Tone& t) { return !t.IsPack(); });
+
+                    if (!row.tones.empty())
                     {
-                        if (tone.IsPack() && std::none_of(mToneHomePacks.begin(), mToneHomePacks.end(),
-                                                          [&tone](const tones::Tone& t) { return t.id == tone.id; }))
-                        {
-                            mToneHomePacks.push_back(tone);
-                        }
+                        mToneHomeRows.push_back(std::move(row));
                     }
                 }
 
@@ -230,7 +258,7 @@ void Shell::LoadTones(bool more)
     }
 }
 
-Ptr Shell::BuildTonesPage()
+Ptr Shell::BuildTonesCommunity()
 {
     auto& service = mSession.Tones();
 
@@ -238,6 +266,27 @@ Ptr Shell::BuildTonesPage()
     {
         service.RefreshAccount();
         LoadTones(false);
+    }
+
+    // Cards or List, as last chosen here or in Soundshed Guitar (they share the setting).
+    if (!mTonesListRead && mState.appSettings.is_object())
+    {
+        mTonesListRead = true;
+        const auto layout = mState.appSettings.find("toneSharing.feedLayout");
+        mTonesList = layout != mState.appSettings.end() && layout->is_string() && *layout == "list";
+    }
+
+    // The search keeps its focus while the page is rebuilt round it (results arriving).
+    if (mTonesSearchBox && mTonesSearchBox->is_focus() && mTonesSearchElement)
+    {
+        mSession.View().post([this, alive = std::weak_ptr<bool>(mAlive), box = std::weak_ptr(mTonesSearchBox)] {
+            const auto field = box.lock();
+
+            if (alive.lock() && field && field == mTonesSearchBox)
+            {
+                FocusInView(mSession.View(), *field);
+            }
+        });
     }
 
     // The side list takes 245 px in the full layout.
@@ -284,6 +333,8 @@ Ptr Shell::BuildTonesPage()
         s->Select(mTonesList ? 1 : 0);
         s->onSelect = [this](int index) {
             mTonesList = index == 1;
+            mTonesListRead = true;
+            mSession.Commands().SetSetting("toneSharing.feedLayout", mTonesList ? "list" : "cards");
             mEffectSignature.clear();
             Mark(kPage);
         };
@@ -292,6 +343,7 @@ Ptr Shell::BuildTonesPage()
     nav.tools = {FixedHeight(26, createPack(208.0f)), layout(104.0f)};
     nav.compactTools = {FixedWidth(110, Middle(createPack(110.0f))), FixedWidth(112, Middle(layout(56.0f)))};
     nav.compactToolsWidth = 110.0f + 112.0f;
+    nav.top = 12.0f; // under the section strip
     nav.help = "Share a preset in 3 steps: load it in Soundshed Guitar, click Publish there, then use Share on "
                "its card here after approval.";
 
@@ -306,10 +358,18 @@ Ptr Shell::BuildTonesPage()
             mTonesSearchBox = box;
             mTonesSearchElement = el::share(std::move(element));
             mTonesSearchBox->on_enter = [this](std::string_view text) {
-                mTonesQuery = std::string(text);
+                mTonesSearchPending = false;
+                mTonesTyped = std::string(text);
+                mTonesQuery = mTonesTyped;
                 LoadTones(false);
                 Mark(kPage);
                 return true;
+            };
+            // As it is typed: 250 ms after the last key (TickToneSearch).
+            mTonesSearchBox->on_text = [this](std::string_view text) {
+                mTonesTyped = std::string(text);
+                mTonesSearchPending = true;
+                mTonesSearchDue = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
             };
         }
 
@@ -337,6 +397,8 @@ Ptr Shell::BuildTonesPage()
         clear->Size(56, 30).Label("Clear", 11.0f).Disabled(mTonesQuery.empty() && mTonesTag.empty());
         clear->onClick = [this] {
             mTonesQuery.clear();
+            mTonesTyped.clear();
+            mTonesSearchPending = false;
             mTonesTag.clear();
 
             if (mTonesSearchBox)
@@ -396,6 +458,13 @@ Ptr Shell::BuildTonesPage()
         }
 
         actions.push_back({"ui-share", false, true, {}, [this, tone] { ShareTone(tone); }});
+
+        // The account's own, in My Content: deleted from tone sharing (the web's Delete).
+        if (mTonesTab == TonesTab::Mine)
+        {
+            actions.push_back({"ui-trash", false, true, {}, [this, tone] { DeleteMyTone(tone); }});
+        }
+
         return actions;
     };
 
@@ -473,27 +542,32 @@ Ptr Shell::BuildTonesPage()
         // The tone a link opened the page on, over the rest until it is put away.
         if (mTonesShared)
         {
+            // As the web's active filter: what is shown, and Clear Filter.
             auto close = std::make_shared<IconButton>(mTheme, mIcons, "", IconButton::Look::Boxed);
-            close->Size(80, 24).Label("Show all", 10.5f);
+            close->Size(84, 24).Label("Clear Filter", 10.5f);
             close->onClick = [this] {
                 mTonesShared.reset();
                 Mark(kPage);
             };
-            body.push_back(
-                FixedHeight(30, Row({SectionTitle(mTheme, "Shared with you"), Stretch(), Pad(0, 4, 0, 2, close)})));
+            auto filtered = std::make_shared<Text>(mTheme, "Filtered to a shared tone.", 11.0f);
+            filtered->Colour(mTheme.TextSecondary());
+            body.push_back(FixedHeight(30, Row({Middle(filtered), Stretch(), Pad(0, 4, 0, 2, close)})));
             body.push_back(grid({*mTonesShared}, kPresetCardMin, kPresetCardHeight));
         }
 
-        if (!mToneHomePacks.empty())
+        const bool searching = !mTonesQuery.empty() || !mTonesTag.empty();
+
+        // Each of /home's pack rows a strip under its own title; a search shows only results.
+        for (const auto& homeRow : searching ? std::vector<tones::HomeRow>{} : mToneHomeRows)
         {
-            body.push_back(SectionTitle(mTheme, "Latest packs"));
+            body.push_back(SectionTitle(mTheme, homeRow.title.empty() ? std::string("Latest packs") : homeRow.title));
             std::vector<Ptr> strip;
 
             // As rows, the strip is a line of wide bars.
             const float packWidth = mTonesList ? 320.0f : kPackCardWidth;
             const float packHeight = mTonesList ? 32.0f : compactPackHeight;
 
-            for (const auto& pack : mToneHomePacks)
+            for (const auto& pack : homeRow.tones)
             {
                 auto card = std::make_shared<ToneCard>(mTheme, mIcons, pack, image, packWidth, packHeight);
                 card->row = mTonesList;
@@ -507,32 +581,40 @@ Ptr Shell::BuildTonesPage()
                 strip.push_back(card);
             }
 
-            const float stripWidth = static_cast<float>(mToneHomePacks.size()) * (packWidth + kCardGap);
+            const float stripWidth = static_cast<float>(homeRow.tones.size()) * (packWidth + kCardGap);
             body.push_back(FixedHeight(packHeight + 14.0f, HScroll(FixedWidth(stripWidth, Row(strip)))));
         }
 
-        body.push_back(
-            SectionTitle(mTheme, mTonesQuery.empty() && mTonesTag.empty() ? "Community presets" : "Search results"));
-
+        // The web's texts: what is being fetched, a search with nothing, a service with nothing.
         if (mToneItems.empty())
         {
-            body.push_back(message(mTonesLoading ? "Loading..." : "No presets match."));
+            if (mTonesLoading)
+            {
+                body.push_back(message(searching ? "Searching..." : "Loading..."));
+            }
+            else if (mTonesError.empty())
+            {
+                body.push_back(message(searching ? tones::NoMatchText(mTonesQuery, mTonesTag)
+                                                 : std::string("No content yet. Publish the first tone.")));
+            }
         }
         else
         {
+            body.push_back(SectionTitle(mTheme, searching ? "Search results" : "Community presets"));
             body.push_back(grid(mToneItems, kPresetCardMin, kPresetCardHeight));
-        }
 
-        if (mTonesMore || mTonesLoading)
-        {
+            // Load More, and how many are loaded (the web's feed footer).
             auto loadMore = std::make_shared<IconButton>(mTheme, mIcons, "", IconButton::Look::Boxed);
-            loadMore->Size(110, 30).Label(mTonesLoading ? "Loading..." : "Load More", 11.0f).Disabled(mTonesLoading);
+            loadMore->Size(110, 30).Label(mTonesLoading ? "Loading..." : "Load More", 11.0f);
+            loadMore->Disabled(mTonesLoading || !mTonesMore);
             loadMore->onClick = [this] {
                 LoadTones(true);
                 Mark(kPage);
             };
+            auto loaded = std::make_shared<Text>(mTheme, tones::LoadedText(mToneItems.size(), mTonesMore), 11.0f);
+            loaded->Colour(mTheme.TextMuted()).Fixed(true);
             body.push_back(VGap(10));
-            body.push_back(FixedHeight(30, Row({Stretch(), loadMore, Stretch()})));
+            body.push_back(FixedHeight(30, Row({Stretch(), loadMore, HGap(12), Middle(loaded), Stretch()})));
         }
 
         break;
@@ -542,7 +624,7 @@ Ptr Shell::BuildTonesPage()
 
         if (mTonePacks.empty())
         {
-            body.push_back(message(mTonesLoading ? "Loading..." : "No packs yet."));
+            body.push_back(message(mTonesLoading ? "Loading..." : "No content yet. Publish the first tone."));
         }
         else
         {
@@ -568,15 +650,19 @@ Ptr Shell::BuildTonesPage()
         break;
     }
     case TonesTab::Installed: {
+        // As tall as the web's pack cards (.tone-sharing-pack-hero, 210 px; 150 at the compact size).
+        const float kInstalledHeight = compactPackHeight;
         const auto entries = tones::InstalledEntries(mState.appSettings);
 
         if (entries.empty())
         {
-            body.push_back(EmptyState("Nothing installed yet",
-                                      "Presets and packs you install from Presets or Packs are listed here.",
+            body.push_back(EmptyState("No installed packs yet",
+                                      "Install a preset or pack from Presets or Packs, or import a zip, first.",
                                       PageRoom()));
             break;
         }
+
+        body.push_back(SectionTitle(mTheme, "Installed packs"));
 
         std::vector<tones::Tone> list;
         std::vector<std::vector<std::string>> details;
@@ -606,7 +692,7 @@ Ptr Shell::BuildTonesPage()
 
             for (std::size_t j = i; j < std::min(list.size(), i + static_cast<std::size_t>(columns)); ++j)
             {
-                auto card = std::make_shared<ToneCard>(mTheme, mIcons, list[j], nullptr, width, 128.0f);
+                auto card = std::make_shared<ToneCard>(mTheme, mIcons, list[j], nullptr, width, kInstalledHeight);
                 card->lines = details[j];
                 const auto id = list[j].id, title = list[j].title;
                 card->actions.push_back({"ui-trash", false, true, {}, [this, id, title] {
@@ -631,18 +717,17 @@ Ptr Shell::BuildTonesPage()
                 rows.push_back(VGap(kCardGap));
             }
 
-            rows.push_back(FixedHeight(128.0f, Row(row)));
+            rows.push_back(FixedHeight(kInstalledHeight, Row(row)));
         }
 
-        body.push_back(VGap(8));
         body.push_back(Col(rows));
         break;
     }
     case TonesTab::Mine: {
         if (!service.HasSession())
         {
-            body.push_back(EmptyState("Not signed in", "Sign In, at the left of the sections, to see what you publish.",
-                                      PageRoom()));
+            body.push_back(
+                EmptyState("Sign in to view your content.", "Sign In is at the left of the sections.", PageRoom()));
             break;
         }
 
@@ -687,59 +772,397 @@ Ptr Shell::BuildTonesPage()
 
     body.push_back(VGap(16));
     auto content =
-        VScroll(Pad(mWide ? 14.0f : metrics::kPagePad, mWide ? 18.0f : metrics::kPagePadTop, 14, 0, Col(body)));
-    return Over(WithSectionNav(std::move(nav), content), std::make_shared<StageBackdrop>(mTheme));
+        VScroll(Pad(mWide ? 14.0f : metrics::kPagePad, mWide ? 12.0f : metrics::kPagePadTop, 14, 0, Col(body)));
+    return WithSectionNav(std::move(nav), content);
 }
 
-void Shell::OpenToneAccount(el::rect anchor)
+void Shell::OpenToneAccount(el::rect)
 {
+    // The web's Account dialog (tone-sharing-signin-modal.html, account.ts): signed out, an email
+    // and the code it is sent; signed in, the creator name and bio, saved to the profile.
     auto& service = mSession.Tones();
+    const auto& account = service.Account();
+    const bool signedIn = account.has_value() || service.HasSession();
 
-    if (service.Account() || service.HasSession())
+    const auto label = [this](const char* text) {
+        auto l = std::make_shared<Text>(mTheme, text, 12.0f);
+        l->Colour(mTheme.TextSecondary());
+        return FixedHeight(22, l);
+    };
+    const auto field = [this](const std::string& placeholder, const std::string& text) {
+        auto [element, box] = el::input_box(placeholder, Font(Weight::Regular), 1.0f);
+        box->set_text(text);
+        return std::pair{el::share(std::move(element)), box};
+    };
+    auto status = std::make_shared<Text>(
+        mTheme, account ? "Signed in as " + account->email : std::string(signedIn ? "Signed in" : "Signed out"), 12.0f);
+    status->Colour(mTheme.TextSecondary());
+    std::vector<Ptr> rows{FixedHeight(26, status), VGap(6)};
+    std::vector<Ptr> actions;
+
+    // The dialog's own fields and buttons are held weakly by its handlers, so closing it frees them.
+    using Weak = std::weak_ptr<el::basic_input_box>;
+    const auto read = [](const Weak& weak) {
+        const auto box = weak.lock();
+        return box ? box->get_utf8() : std::string();
+    };
+
+    if (!signedIn)
     {
-        const auto& account = service.Account();
-        std::vector<MenuItem> items;
+        auto [emailElement, email] = field("you@example.com", "");
+        auto [codeElement, code] = field("Enter code from email", "");
+        rows.insert(rows.end(), {label("Email"), FixedHeight(36, emailElement), VGap(8), label("One-time Code"),
+                                 FixedHeight(36, codeElement)});
+        auto verify = DialogButton("Sign In", {}, true);
+        auto send = DialogButton("Send Code", {}, false);
+        verify->Enabled(false);
+        const std::weak_ptr<Button> weakSend = send, weakVerify = verify;
+        send->OnClick([this, read, email = Weak(email), status, weakSend, weakVerify] {
+            const auto address = read(email);
 
-        if (account)
-        {
-            items.push_back({account->Label(), false, true, {}});
-        }
-
-        items.push_back({"Sign out", false, false, [this] {
-                             OpenConfirm("Sign out of tone sharing",
-                                         "This signs Soundshed Guitar out too: they share the account.", "Sign out",
-                                         [this] { mSession.Tones().SignOut(); });
-                         }});
-        OpenDropdown(anchor, std::move(items), 200.0f);
-        return;
-    }
-
-    // Signing in: an email, then the code the service emails to it.
-    OpenPrompt("Sign in to tone sharing", "", "Email me a code", [this](const std::string& email) {
-        mSession.Tones().RequestCode(email, [this, email](const guitarfx::uiclient::tones::Response& response) {
-            if (!response.ok)
+            if (address.find('@') == std::string::npos)
             {
-                ShowToast("Could not send a code", response.error, true);
+                status->Set("Enter an email address");
+                mSession.View().refresh();
                 return;
             }
 
-            OpenPrompt("Enter the code sent to " + email, "", "Sign in", [this, email](const std::string& code) {
-                mSession.Tones().VerifyCode(email, code, [this](const guitarfx::uiclient::tones::Response& answer) {
-                    if (!answer.ok)
-                    {
-                        ShowToast("Could not sign in", answer.error, true);
-                    }
+            status->Set("Sending code...");
+            mSession.View().refresh();
+            mSession.Tones().RequestCode(address, [this, status, weakSend, weakVerify](const tones::Response& r) {
+                status->Set(r.ok ? "Code sent. Check your email." : "Send code failed: " + r.error);
+                const auto sendButton = weakSend.lock();
+                const auto verifyButton = weakVerify.lock();
 
-                    Mark(kPage);
-                });
+                if (r.ok && sendButton && verifyButton)
+                {
+                    sendButton->Set("Re-Send Code");
+                    verifyButton->Enabled(true);
+                }
+
+                mSession.View().refresh();
             });
         });
-    });
+        auto signIn = [this, read, email = Weak(email), code = Weak(code), status] {
+            const auto address = read(email), entered = read(code);
+
+            if (address.empty() || entered.empty())
+            {
+                status->Set("Enter email and code");
+                mSession.View().refresh();
+                return;
+            }
+
+            status->Set("Signing in...");
+            mSession.View().refresh();
+            mSession.Tones().VerifyCode(address, entered, [this, status](const tones::Response& r) {
+                if (!r.ok)
+                {
+                    status->Set("Sign-in failed: " + r.error);
+                    mSession.View().refresh();
+                    return;
+                }
+
+                CloseOverlay();
+                Mark(kPage);
+            });
+        };
+        verify->OnClick(signIn);
+        code->on_enter = [signIn](std::string_view) {
+            signIn();
+            return true;
+        };
+        actions = {send, verify};
+    }
+    else
+    {
+        auto [nameElement, name] = field("How your name appears on shared tones", account ? account->displayName : "");
+        auto bio = el::share(el::basic_text_box(account ? account->bio : std::string(), Font(Weight::Regular)));
+        auto bioField = VScroll(el::share(el::margin(el::rect{10.0f, 8.0f, 10.0f, 8.0f}, el::hold(bio))));
+        auto note = std::make_shared<Text>(mTheme, "Your avatar is set in Soundshed Guitar's Account.", 11.0f);
+        note->Colour(mTheme.TextMuted());
+        auto profileStatus = std::make_shared<Text>(mTheme, "", 11.5f);
+        profileStatus->Colour(mTheme.TextSecondary());
+        rows.insert(rows.end(), {label("Creator Name"), FixedHeight(36, nameElement), VGap(8), label("Bio"),
+                                 FixedHeight(76, Rounded(mTheme.Tertiary(), 3.0f, bioField)), VGap(6),
+                                 FixedHeight(20, note), FixedHeight(22, profileStatus)});
+        auto save = DialogButton("Save Profile", {}, true);
+        save->OnClick([this, read, name = Weak(name), bio = std::weak_ptr<el::basic_text_box>(bio), profileStatus,
+                       weakSave = std::weak_ptr<Button>(save)] {
+            const auto trimmed = [](std::string text) {
+                const auto first = text.find_first_not_of(" \t\r\n");
+                return first == std::string::npos ? std::string()
+                                                  : text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
+            };
+            const auto bioBox = bio.lock();
+            nlohmann::json body{{"displayName", trimmed(read(name)).substr(0, 80)},
+                                {"bio", trimmed(bioBox ? bioBox->get_utf8() : std::string()).substr(0, 600)}};
+            profileStatus->Set("Saving profile...");
+
+            if (const auto button = weakSave.lock())
+            {
+                button->Enabled(false);
+            }
+
+            mSession.View().refresh();
+            mSession.Tones().Patch(tones::kProfilePath, body,
+                                   [this, profileStatus, weakSave](const tones::Response& r) {
+                                       profileStatus->Set(r.ok ? "Profile saved." : "Profile save failed: " + r.error);
+
+                                       if (const auto button = weakSave.lock())
+                                       {
+                                           button->Enabled(true);
+                                       }
+
+                                       if (r.ok)
+                                       {
+                                           mSession.Tones().RefreshAccount();
+                                           LoadTones(false);
+                                           Mark(kPage);
+                                       }
+
+                                       mSession.View().refresh();
+                                   });
+        });
+        auto signOut = DialogButton(
+            "Sign Out",
+            [this] {
+                OpenConfirm("Sign out of tone sharing", "This signs Soundshed Guitar out too: they share the account.",
+                            "Sign out", [this] {
+                                mSession.Tones().SignOut();
+                                Mark(kPage);
+                            });
+            },
+            false);
+        actions = {signOut, save};
+    }
+
+    ShowDialog({.title = "Account",
+                .body = Col(rows),
+                .actions = actions,
+                .width = 460.0f,
+                .height = signedIn ? 420.0f : 330.0f});
+}
+
+void Shell::TickToneSearch()
+{
+    if (!mTonesSearchPending || std::chrono::steady_clock::now() < mTonesSearchDue)
+    {
+        return;
+    }
+
+    mTonesSearchPending = false;
+
+    if (mTonesTyped == mTonesQuery)
+    {
+        return;
+    }
+
+    mTonesQuery = mTonesTyped;
+    LoadTones(false);
+    Mark(kPage);
+}
+
+void Shell::DeleteMyTone(const tones::Tone& tone)
+{
+    const bool pack = tone.IsPack();
+    OpenConfirm(pack ? "Delete pack" : "Delete preset",
+                std::string("Delete ") + (pack ? "pack" : "preset") + " \"" + tone.title + "\"? This cannot be undone.",
+                "Delete", [this, pack, id = tone.id] {
+                    mSession.Tones().Delete(pack ? tones::PackPath(id) : tones::ItemPath(id),
+                                            [this, pack](const tones::Response& r) {
+                                                if (!r.ok)
+                                                {
+                                                    ShowToast("Delete failed", r.error, true);
+                                                    return;
+                                                }
+
+                                                ShowToast(pack ? "Pack deleted." : "Preset deleted.", {}, false);
+                                                LoadTones(false);
+                                                Mark(kPage);
+                                            });
+                });
 }
 
 void Shell::ShareTone(const tones::Tone& tone)
 {
     el::set_clipboard({{"text/plain", tones::ShareLink(tone)}});
     ShowToast("Link copied", tone.title, false);
+}
+
+// ── The three sections (tonesPanel/tabs.ts) ──────────────────────────────────────
+
+namespace
+{
+/// One of the strip's tabs (.tones-tab-btn, .tab-btn): muted text, a button face under the
+/// pointer, and the open one on the face with an accent edge.
+class TonesSectionButton final : public Pressable
+{
+  public:
+    TonesSectionButton(const Theme& theme, std::string label, bool active)
+        : mTheme(theme), mLabel(std::move(label)), mActive(active)
+    {
+    }
+
+    [[nodiscard]] AccessInfo Describe() const override
+    {
+        AccessInfo info = Pressable::Describe();
+        info.role = AccessRole::Tab;
+        info.name = NameOr(mLabel);
+        info.selected = mActive;
+        return info;
+    }
+
+    [[nodiscard]] float Width() const
+    {
+        return MeasureTextWidth(mLabel, LabelFont()) + 24.0f;
+    }
+
+    el::view_limits limits(const el::basic_context&) const override
+    {
+        const float w = Width(), h = metrics::Hit(28.0f, 40.0f);
+        return {{w, h}, {w, h}};
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        NoteDrawn(ctx);
+        auto& cnv = ctx.canvas;
+        const auto b = metrics::Face(ctx.bounds, ctx.bounds.width(), 28.0f);
+
+        if (mActive || mHover)
+        {
+            cnv.fill_style(mTheme.ButtonBg());
+            cnv.fill_round_rect(b, 8.0f);
+        }
+
+        if (mActive)
+        {
+            // The border and the inset ring: two pixels of the accent.
+            cnv.stroke_style(mTheme.Accent());
+            cnv.line_width(2.0f);
+            cnv.stroke_round_rect(b.inset(1.0f, 1.0f), 7.0f);
+        }
+
+        FillText(cnv, mLabel, LabelFont(), mActive || mHover ? mTheme.Ink() : mTheme.TextMuted(), b, HAlign::Centre);
+    }
+
+  private:
+    static el::font_descr LabelFont()
+    {
+        return Font(Weight::Medium).size(12.0f);
+    }
+
+    const Theme& mTheme;
+    std::string mLabel;
+    bool mActive;
+};
+} // namespace
+
+bool Shell::TonesSectionOn(TonesSection section) const
+{
+    using guitarfx::uiclient::Feature;
+
+    switch (section)
+    {
+    case TonesSection::Community:
+        return guitarfx::uiclient::IsFeatureEnabled(mState, Feature::ToneSharing);
+    case TonesSection::Tone3000:
+        return guitarfx::uiclient::IsFeatureEnabled(mState, Feature::Tone3000);
+    default:
+        return true;
+    }
+}
+
+Shell::TonesSection Shell::ResolveTonesSection(TonesSection wanted) const
+{
+    if (TonesSectionOn(wanted))
+    {
+        return wanted;
+    }
+
+    // Your Presets has no feature switch, so there is always one.
+    for (const auto section : {TonesSection::Community, TonesSection::Local, TonesSection::Tone3000})
+    {
+        if (TonesSectionOn(section))
+        {
+            return section;
+        }
+    }
+
+    return TonesSection::Local;
+}
+
+void Shell::OpenTonesCommunity(TonesTab tab)
+{
+    mTonesSection = TonesSection::Community;
+    mTonesTab = tab;
+    mTonesPage = 1;
+    LoadTones(false);
+    ShowPage(Page::Tones);
+    Mark(kPage);
+}
+
+Ptr Shell::BuildTonesPage()
+{
+    // A section starts only once it is on screen: Community's feed, or Tone 3000's first search.
+    const auto section = ResolveTonesSection(mTonesSection);
+    mTonesSection = section;
+
+    // The strip (.tones-tabs): the sections that are on, in their order, Left and Right moving
+    // between them (they are one Tab stop, as a tab list).
+    std::vector<Ptr> tabs;
+
+    for (const auto& [label, which] : {std::pair{"Community Presets", TonesSection::Community},
+                                       std::pair{"Your Presets", TonesSection::Local},
+                                       std::pair{"Tone 3000", TonesSection::Tone3000}})
+    {
+        if (!TonesSectionOn(which))
+        {
+            continue;
+        }
+
+        auto tab = std::make_shared<TonesSectionButton>(mTheme, label, which == section);
+        tab->onClick = [this, which] {
+            if (mTonesSection == which)
+            {
+                return;
+            }
+
+            mTonesSection = which;
+            Mark(kPage);
+        };
+
+        if (!tabs.empty())
+        {
+            tabs.push_back(HGap(4));
+        }
+
+        tabs.push_back(tab);
+    }
+
+    Ptr content;
+
+    switch (section)
+    {
+    case TonesSection::Local:
+        content = BuildTonesLocal();
+        break;
+    case TonesSection::Tone3000:
+        content = BuildTonesTone3000();
+        break;
+    default:
+        content = BuildTonesCommunity();
+        break;
+    }
+
+    // The page's padding (.panel-content, 24 px; 10 at the compact size), the strip, its rule, and
+    // the section under it.
+    const float padX = mWide ? 24.0f : 10.0f;
+    const float stripHeight = metrics::Hit(28.0f, 40.0f);
+    tabs.push_back(Stretch());
+    auto strip = Pad(padX, mWide ? 18.0f : 8.0f, padX, mWide ? 10.0f : 6.0f, FixedHeight(stripHeight, Row(tabs)));
+    auto rule = Pad(padX, 0, padX, 0, FixedHeight(1, Fill(mTheme.Text().opacity(0.06f), std::make_shared<el::element>())));
+    return Over(Col({strip, rule, content}), std::make_shared<StageBackdrop>(mTheme));
 }
 } // namespace nanoq::ui

@@ -4,11 +4,19 @@
 // and leaves the flyout open, so themes can be tried one after another; a tap outside, Escape or
 // the button again closes it.
 //
+// Under the tiles, where Soundshed Guitar hosts this UI and can draw itself with either: the App
+// UI choice, this one (beta) or the web UI (ts/settings/nativeEditor.ts). The first time this UI
+// opens there, it says it is a beta and asks for bug reports.
+//
 // The zoom is the view's scale (the presenter's, in QPlug's hosts), kept in uiSettings.native.zoom
 // with Nano Q's other UI settings: in the app settings and the host's state, so a reopened editor,
 // a restored project and the next launch come back at it.
 
 #include "ui/shell/Shell.h"
+
+#include "IPluginHost.h"
+#include "ui/dialogs/DialogChrome.h"
+#include "ui/input/AccessBridge.h"
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +42,19 @@ constexpr float kTileMin = 124.0f; // grid-template-columns: repeat(auto-fill, m
 constexpr float kTilePad = 5.0f;
 constexpr float kNameHeight = 16.0f;
 constexpr float kHeaderHeight = 28.0f;
+constexpr float kAppUiRowHeight = 28.0f; // the joined Segmented's own height (.app-ui-choice)
+constexpr float kAppUiHintHeight = 16.0f;
+
+// Set once the beta notice has been seen (ShowNativeUiBetaNoticeOnce), in the shared app settings
+// so every instance and the next launch know.
+constexpr const char* kBetaNoticeSetting = "ui.nativeEditorBetaNoticeShown";
+constexpr const char* kBugReports = "https://github.com/webprofusion/soundshed-guitar/issues";
+
+[[nodiscard]] bool FlagSetting(const nlohmann::json& settings, const char* key, bool fallback)
+{
+    const auto it = settings.find(key);
+    return it != settings.end() && it->is_boolean() ? it->get<bool>() : fallback;
+}
 
 [[nodiscard]] std::optional<float> StoredZoom(const nlohmann::json& uiSettings)
 {
@@ -184,8 +205,9 @@ class ThemeTile final : public Pressable
 std::shared_ptr<IconButton> Shell::BuildThemeButton()
 {
     // The web UI's palette and "Theme" (#footer-theme-btn): the flyout says which theme is on.
-    auto button = std::make_shared<IconButton>(mTheme, mIcons, "ui-theme", IconButton::Look::Boxed);
-    button->Size(84, 28).IconSize(15).Label("Theme", 11.0f).AccessName("Theme and zoom");
+    auto button = std::make_shared<IconButton>(mTheme, mIcons, "ui-theme",
+                                               mWide ? IconButton::Look::Footer : IconButton::Look::Boxed);
+    button->Size(mWide ? 76.0f : 84.0f, 28).IconSize(15).Label("Theme", 11.0f).AccessName("Theme and zoom");
     button->onClick = [this, b = button.get()] { ToggleThemeFlyout(b->Bounds()); };
     return button;
 }
@@ -221,7 +243,10 @@ void Shell::OpenThemeFlyout(el::rect anchor)
     const auto view = ViewSize();
     const float width = std::min(kFlyoutWidth, view.x - 16.0f);
     const int count = static_cast<int>(std::size(theme::kThemes));
-    const float headerHeight = kHeaderHeight + 8.0f + 1.0f + kGap;
+    // The header, and under the tiles the App UI choice where there is one.
+    float appUiHeight = 0.0f;
+    Ptr appUi = BuildAppUiChoice(appUiHeight);
+    const float headerHeight = kHeaderHeight + 8.0f + 1.0f + kGap + appUiHeight;
 
     // Above the button when there is more room there (the footer is at the bottom), and kept in
     // the window: a short window scrolls the tiles.
@@ -336,8 +361,14 @@ void Shell::OpenThemeFlyout(el::rect anchor)
         tiles = VScroll(tiles);
     }
 
-    auto panel = Pad(kFlyoutPad, kFlyoutPad, kFlyoutPad, kFlyoutPad,
-                     Col({FixedHeight(kHeaderHeight, Row(header)), VGap(8), rule, VGap(kGap), tiles}));
+    std::vector<Ptr> parts{FixedHeight(kHeaderHeight, Row(header)), VGap(8), rule, VGap(kGap), tiles};
+
+    if (appUi)
+    {
+        parts.push_back(appUi);
+    }
+
+    auto panel = Pad(kFlyoutPad, kFlyoutPad, kFlyoutPad, kFlyoutPad, Col(parts));
     // A layer of its own, over the overlay: at compact density the button is in the Options sheet,
     // which stays open under it, as the web UI's footer sheet does. A tap outside closes only the
     // flyout; the zoom's select opens over it.
@@ -345,6 +376,118 @@ void Shell::OpenThemeFlyout(el::rect anchor)
     mThemeFlyoutAnchor = anchor;
     mThemeFlyout = KeyLayer(PlacePanel(panel, anchor, width, height, above, [this] { CloseThemeFlyout(); }));
     mSession.View().add(mThemeFlyout);
+}
+
+Ptr Shell::BuildAppUiChoice(float& height)
+{
+    height = 0.0f;
+
+    if (!mState.environment.nativeEditor || mState.environment.nativeEditorOnly)
+    {
+        return nullptr;
+    }
+
+    // This UI is up, so it is the choice unless a plugin has been told to open the web UI next.
+    const bool native = FlagSetting(mState.appSettings, guitarfx::kNativeEditorSettingKey, true);
+    auto label = std::make_shared<Text>(mTheme, "APP UI", 11.0f, Weight::SemiBold);
+    label->Colour(mTheme.TextSecondary()).Fixed(true);
+    auto choice = std::make_shared<Segmented>(mTheme, std::vector<std::string>{"Standard", "Native (Nano)"});
+    choice->Joined().Badge(1, "BETA");
+    choice->AccessName("App UI");
+    choice->Select(native ? 1 : 0);
+    // The standalone swaps its editor at once; a plugin's next window follows, so the choice is
+    // marked here until then.
+    choice->onSelect = [this, c = choice.get()](int index) {
+        c->Select(index);
+        mSession.View().refresh();
+        mSession.Commands().SetSetting(guitarfx::kNativeEditorSettingKey, index == 1);
+    };
+
+    auto rule = FixedHeight(1, Fill(mTheme.Text().opacity(0.08f), std::make_shared<el::element>()));
+    std::vector<Ptr> lines{VGap(kGap), rule, VGap(kGap),
+                           FixedHeight(kAppUiRowHeight, Row({Middle(label), Stretch(), choice}))};
+    height = kGap + 1.0f + kGap + kAppUiRowHeight;
+
+    if (!mState.environment.standalone)
+    {
+        auto hint = std::make_shared<Text>(mTheme, "A change takes effect when the plugin window next opens.", 11.0f);
+        hint->Colour(mTheme.TextSecondary());
+        lines.insert(lines.end(), {VGap(6), FixedHeight(kAppUiHintHeight, Row({Middle(hint), Stretch()}))});
+        height += 6.0f + kAppUiHintHeight;
+    }
+
+    return Col(lines);
+}
+
+void Shell::ShowNativeUiBetaNoticeOnce()
+{
+    // Once the settings are in and their theme is on (the text takes its colour when it is
+    // made), and only where this UI is the one chosen over the web UI.
+    if (mBetaNoticeChecked || !mState.haveState || mState.appSettings.empty() || mAppliedTheme != mState.theme)
+    {
+        return;
+    }
+
+    mBetaNoticeChecked = true;
+
+    if (OfferStandardUiForScreenReader())
+    {
+        return;
+    }
+
+    if (!mState.environment.nativeEditor || mState.environment.nativeEditorOnly ||
+        FlagSetting(mState.appSettings, kBetaNoticeSetting, false))
+    {
+        return;
+    }
+
+    mSession.Commands().SetSetting(kBetaNoticeSetting, true);
+
+    // As the other dialogs (Dialogs.cpp DialogWidth): no wider than the window allows.
+    const float width = std::min(480.0f, std::max(240.0f, ViewSize().x - 48.0f));
+    const auto paragraph = [this, width](const char* text) {
+        auto p = std::make_shared<Paragraph>(mTheme, text, width - 40.0f, metrics::kTextSize);
+        p->Colour(mTheme.ModalTextSecondary());
+        return p;
+    };
+    auto body = Col({paragraph("The native UI (Nano) is a beta feature, still in development: not everything is "
+                               "there yet, and you may find bugs. Please report any you find, so they can be fixed."),
+                     VGap(10),
+                     paragraph("To go back to the standard UI, choose Standard under App UI in the Theme flyout, "
+                               "in the footer."),
+                     Stretch()});
+    ShowDialog({.title = "Native UI (Nano) is in beta",
+                .body = body,
+                .actions = {DialogButton(
+                                "Report a bug",
+                                [this] {
+                                    CloseOverlay();
+                                    mSession.Commands().OpenUrl(kBugReports);
+                                },
+                                false),
+                            DialogButton(
+                                "OK", [this] { CloseOverlay(); }, true)},
+                .width = width,
+                .height = kDialogHeaderHeight + kDialogFooterHeight + 150.0f});
+}
+
+bool Shell::OfferStandardUiForScreenReader()
+{
+    // Only where the standard UI can be had: Soundshed Guitar hosting this one.
+    if (!mState.environment.nativeEditor || mState.environment.nativeEditorOnly ||
+        !AccessBridge::UnservedScreenReader())
+    {
+        return false;
+    }
+
+    const bool standalone = mState.environment.standalone;
+    OpenConfirm("A screen reader is running",
+                std::string("The native UI (Nano) can't be read by a screen reader on this system yet. The standard "
+                            "UI can. Use the standard UI?") +
+                    (standalone ? "" : " It opens when the plugin window next opens."),
+                "Use the standard UI",
+                [this] { mSession.Commands().SetSetting(guitarfx::kNativeEditorSettingKey, false); });
+    return true;
 }
 
 Ptr Shell::BuildZoomPicker()
@@ -398,6 +541,39 @@ void Shell::SetZoom(float zoom)
     mZoomStored = zoom;
     ApplyZoom(zoom);
     mSession.Commands().PatchNativeUiSettings({{"zoom", zoom}});
+}
+
+void Shell::StepZoom(int direction)
+{
+    if (direction == 0)
+    {
+        SetZoom(1.0f);
+        return;
+    }
+
+    const float current = CurrentZoom();
+    float next = current;
+
+    if (direction > 0)
+    {
+        const auto* up = std::find_if(std::begin(kZoomStops), std::end(kZoomStops),
+                                      [current](float stop) { return stop > current + 0.001f; });
+        next = up != std::end(kZoomStops) ? *up : kZoomMax;
+    }
+    else
+    {
+        for (const float stop : kZoomStops)
+        {
+            if (stop < current - 0.001f)
+            {
+                next = stop;
+            }
+        }
+
+        next = next == current ? kZoomMin : next;
+    }
+
+    SetZoom(next);
 }
 
 void Shell::ApplyZoom(float zoom)

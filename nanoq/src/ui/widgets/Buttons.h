@@ -9,6 +9,7 @@
 #include "ui/widgets/SwitchMotion.h"
 
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <string>
@@ -27,6 +28,11 @@ class IconButton final : public Pressable
         Ghost,
         Soft,
         Boxed,
+        Tool,   // the preset toolbar's keys (.preset-action-btn): no face until hovered
+        Edged,  // the header's gear (.nav-settings-btn): an edge and no face
+        Pill,   // the control bar's chevrons and mute (.output-quick-mute-btn): 18 x 16 pills
+        Well,   // the control bar's EQ (.eq-icon-btn): a sunk square that glows when on
+        Footer, // the footer's buttons (.footer-btn): no face until hovered; on, the accent's
         Accent,
         Chip,    // the effect header's Presets (.default-effect-shell-chip)
         Primary, // a dialog's confirming button: filled with the accent
@@ -46,8 +52,22 @@ class IconButton final : public Pressable
         AccessInfo info = Pressable::Describe();
         info.role = mCaret ? AccessRole::ComboBox : AccessRole::Button;
         info.name = NameOr(mLabel.empty() ? IconMeaning(mIcon) : mLabel);
-        info.selected = mLit;
+        // One that lights up (the EQ on, a mode chosen) is a toggle, as the web's aria-pressed;
+        // one with a caret opens a list.
+        info.toggled = mLitSet && !mCaret ? (mLit ? 1 : 0) : -1;
+        info.expanded = mCaret ? 0 : -1;
         return info;
+    }
+
+    /// An icon-only button says what it does under the pointer, as the web's title= does.
+    [[nodiscard]] std::string TooltipText() const override
+    {
+        if (!mTooltip.empty() || !mLabel.empty())
+        {
+            return mTooltip;
+        }
+
+        return NameOr(IconMeaning(mIcon));
     }
 
     /// What an icon on a button means, for one with no label to read.
@@ -114,10 +134,25 @@ class IconButton final : public Pressable
         return words;
     }
 
+    /// Drawn as another look (a footer's copy of a button built elsewhere).
+    IconButton& Styled(Look look)
+    {
+        mLook = look;
+        return *this;
+    }
+
     IconButton& Size(float w, float h)
     {
         mW = w;
         mH = h;
+        return *this;
+    }
+
+    /// The room either side of a label together (20 unless set): a flat trigger's is less (the
+    /// input mode's .input-mode-trigger pads 4 a side).
+    IconButton& LabelPadding(float both)
+    {
+        mLabelPad = both;
         return *this;
     }
 
@@ -152,6 +187,7 @@ class IconButton final : public Pressable
     IconButton& Lit(bool lit)
     {
         mLit = lit;
+        mLitSet = true;
         return *this;
     }
 
@@ -159,6 +195,21 @@ class IconButton final : public Pressable
     {
         mInk = ink;
         mHasInk = true;
+        return *this;
+    }
+
+    /// The colour it lights in, where not the accent (muted output's coral).
+    IconButton& LitColour(el::color colour)
+    {
+        mLitColour = colour;
+        mHasLitColour = true;
+        return *this;
+    }
+
+    /// Unsaved: the red tint of Save with changes to keep (.preset-action-btn-unsaved).
+    IconButton& Unsaved(bool unsaved)
+    {
+        mUnsaved = unsaved;
         return *this;
     }
 
@@ -242,6 +293,45 @@ class IconButton final : public Pressable
             fill = mHover ? mTheme.Elevated() : mTheme.Bar();
             line = mTheme.ModalRule();
             break;
+        case Look::Edged:
+            radius = 6.0f;
+            fill = mHover ? mTheme.Text().opacity(0.06f) : fill;
+            line = mTheme.Border();
+            ink = mTheme.TextSecondary();
+            break;
+        case Look::Pill:
+            radius = b.height() * 0.5f;
+            fill = mHover ? mTheme.Text().opacity(0.06f) : mTheme.Elevated();
+            line = mHover ? mTheme.Accent() : mTheme.Border();
+            ink = mHover ? mTheme.Text() : mTheme.TextSecondary();
+            break;
+        case Look::Well:
+            radius = 6.0f;
+            fill = mTheme.Text().opacity(mHover ? 0.15f : 0.05f);
+            line = mTheme.Border();
+            ink = mHover ? mTheme.TextSecondary() : mTheme.TextMuted();
+            break;
+        case Look::Tool:
+
+            if (mHover && mEnabled)
+            {
+                fill = mTheme.Text().opacity(0.12f);
+                ink = mTheme.Text();
+            }
+
+            break;
+        case Look::Footer:
+            // --footer-hover-bg and --footer-press-bg: the strong text at 10% and 17%.
+            radius = 6.0f;
+            ink = mTheme.TextSecondary();
+
+            if (mHover && mEnabled)
+            {
+                fill = mTheme.Text().opacity(mDown ? 0.17f : 0.10f);
+                ink = mTheme.Text();
+            }
+
+            break;
         case Look::Primary:
             radius = 6.0f;
             fill = mTheme.Accent().level(mHover ? 1.06f : 0.92f);
@@ -271,15 +361,42 @@ class IconButton final : public Pressable
 
         if (mLit)
         {
-            fill = mTheme.Accent().opacity(0.16f);
-            line = mTheme.Accent().opacity(0.55f);
-            ink = mTheme.Accent();
+            const auto lit = mHasLitColour ? mLitColour : mTheme.Accent();
+            fill = lit.opacity(0.16f);
+            line = lit.opacity(mLook == Look::Edged || mLook == Look::Pill ? 0.7f : 0.55f);
+            ink = lit;
+
+            if (mLook == Look::Footer)
+            {
+                // --footer-on-bg and --footer-on-border: the accent 24% into the bar, its edge at 62%.
+                const auto bar = mTheme.Bar();
+                fill = el::color{lit.red * 0.24f + bar.red * 0.76f, lit.green * 0.24f + bar.green * 0.76f,
+                                 lit.blue * 0.24f + bar.blue * 0.76f, 1.0f};
+                line = lit.opacity(0.62f);
+                ink = mTheme.Text();
+            }
+            else if (mLook == Look::Edged || mLook == Look::Well)
+            {
+                fill = mTheme.Text().opacity(mLook == Look::Well ? 0.15f : 0.06f);
+                line = mLook == Look::Well ? mTheme.Border() : lit;
+            }
+            else if (mLook == Look::Pill)
+            {
+                fill = mTheme.Elevated();
+            }
         }
 
         // Lit takes the accent over a chosen ink: a tile that is on reads as on.
         if (mHasInk && !mLit)
         {
             ink = mInk;
+        }
+
+        if (mUnsaved && !mLit)
+        {
+            fill = mTheme.Error().opacity(mHover && mEnabled ? 0.28f : 0.18f);
+            line = mTheme.Error().opacity(0.38f);
+            ink = mTheme.Error();
         }
 
         if (!mEnabled)
@@ -294,6 +411,14 @@ class IconButton final : public Pressable
 
         if (fill.alpha > 0.0f)
         {
+            auto state = cnv.new_state();
+
+            // The EQ on glows in the accent (box-shadow 0 0 8px).
+            if (mLit && mLook == Look::Well)
+            {
+                cnv.shadow_style(el::point{0.0f, 0.0f}, 8.0f, mTheme.Accent().opacity(0.8f));
+            }
+
             cnv.fill_style(fill);
             cnv.fill_round_rect(b, radius);
         }
@@ -325,6 +450,9 @@ class IconButton final : public Pressable
         switch (mLook)
         {
         case Look::Boxed:
+        case Look::Tool:
+        case Look::Footer:
+        case Look::Edged:
             key = &skin.keys.tool;
             break;
         case Look::Soft:
@@ -360,6 +488,9 @@ class IconButton final : public Pressable
         switch (mLook)
         {
         case Look::Boxed:
+        case Look::Tool:
+        case Look::Footer:
+        case Look::Edged:
             return b.keyTool;
         case Look::Soft:
             return b.keyNav;
@@ -428,7 +559,7 @@ class IconButton final : public Pressable
         if (!mLabel.empty())
         {
             const float text = el::measure_text(cnv, mLabel, Font(Weight::SemiBold).size(LabelSize())).x;
-            w = std::max(w, (mIcon.empty() ? 0.0f : mIconSize + 6.0f) + text + (mCaret ? 12.0f : 0.0f) + 20.0f);
+            w = std::max(w, (mIcon.empty() ? 0.0f : mIconSize + 6.0f) + text + (mCaret ? 12.0f : 0.0f) + mLabelPad);
         }
         else if (mCaret)
         {
@@ -442,10 +573,10 @@ class IconButton final : public Pressable
     Icons& mIcons;
     std::string mIcon, mLabel;
     Look mLook;
-    float mW = 28.0f, mH = 28.0f, mIconSize = 14.0f, mLabelSize = 10.0f;
+    float mW = 28.0f, mH = 28.0f, mIconSize = 14.0f, mLabelSize = 10.0f, mLabelPad = 20.0f;
     float mTouchTarget = metrics::kTouchTarget;
-    bool mCaret = false, mLit = false, mHasInk = false;
-    el::color mInk;
+    bool mCaret = false, mLit = false, mLitSet = false, mHasInk = false, mUnsaved = false, mHasLitColour = false;
+    el::color mInk, mLitColour;
 };
 
 /// The effect header's on/off switch (.default-effect-shell-toggle): an accent pill reading ON
@@ -543,9 +674,17 @@ class TextTab final : public Pressable
         return info;
     }
 
+    /// The header's tabs (.nav-tab): bold, spaced `tracking` em, muted until hovered or chosen.
+    TextTab& Nav(float tracking)
+    {
+        mNav = true;
+        mTracking = tracking;
+        return *this;
+    }
+
     el::view_limits limits(const el::basic_context& ctx) const override
     {
-        const float w = el::measure_text(ctx.canvas, mLabel, Font(Weight::SemiBold).size(mSize)).x + mPadding;
+        const float w = TrackedWidth(ctx.canvas, mLabel, TabFont(), mTracking) + mPadding;
         return {{w, mHeight}, {w, mHeight}};
     }
 
@@ -553,9 +692,10 @@ class TextTab final : public Pressable
     {
         auto& cnv = ctx.canvas;
         const auto b = ctx.bounds;
-        const auto ink = mActive ? mTheme.Accent() : (mHover ? mTheme.Text() : mTheme.TextSecondary());
-        FillText(cnv, mLabel, Font(Weight::SemiBold).size(mSize), ink,
-                 el::rect{b.left, b.top, b.right, b.bottom - 2.0f}, HAlign::Centre);
+        const auto rest = mNav ? mTheme.TextMuted() : mTheme.TextSecondary();
+        const auto ink = mActive ? mTheme.Accent() : (mHover ? mTheme.Text() : rest);
+        FillTrackedText(cnv, mLabel, TabFont(), ink, el::rect{b.left, b.top, b.right, b.bottom - 2.0f}, HAlign::Centre,
+                        mTracking);
 
         if (mActive)
         {
@@ -565,10 +705,17 @@ class TextTab final : public Pressable
     }
 
   private:
+    [[nodiscard]] el::font_descr TabFont() const
+    {
+        return Font(Weight::SemiBold).size(mSize);
+    }
+
     const Theme& mTheme;
     std::string mLabel;
     bool mActive;
+    bool mNav = false;
     float mSize, mPadding, mHeight;
+    float mTracking = 0.0f;
 };
 
 /// A tab drawn as text with an accent underline when chosen (.node-param-tab).
@@ -649,6 +796,7 @@ class SelectField final : public Pressable
         info.role = AccessRole::ComboBox;
         info.name = NameOr("Choose");
         info.value = mText;
+        info.expanded = 0;
         return info;
     }
 
@@ -683,6 +831,188 @@ class SelectField final : public Pressable
     Icons& mIcons;
     std::string mText;
     bool mChosen, mWarn;
+};
+
+/// An empty model or IR slot (.resource-picker-label.is-empty): a dashed accent drop zone that
+/// says what to do, "+ Choose an IR", the file a drop takes, and an accent Browse. An optional
+/// slot (the cabinet's second IR) is asked for quietly: a faint dashed line and "+ Add a second IR".
+/// A tap opens the library.
+class EmptySlotField final : public Pressable
+{
+  public:
+    EmptySlotField(const Theme& theme, std::string prompt, std::string hint, bool optional)
+        : mTheme(theme), mPrompt(std::move(prompt)), mHint(std::move(hint)), mOptional(optional)
+    {
+    }
+
+    [[nodiscard]] AccessInfo Describe() const override
+    {
+        AccessInfo info = Pressable::Describe();
+        info.role = AccessRole::Button;
+        info.name = mHint.empty() ? mPrompt : mPrompt + ", " + mHint;
+        return info;
+    }
+
+    el::view_limits limits(const el::basic_context&) const override
+    {
+        return {{120.0f, 26.0f}, {el::full_extent, el::full_extent}};
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        NoteDrawn(ctx);
+        auto& cnv = ctx.canvas;
+        const auto b = metrics::Touch() ? metrics::Face(ctx.bounds, ctx.bounds.width(), 26.0f) : ctx.bounds;
+        const auto accent = mTheme.Accent();
+        const auto ink = mTheme.Ink();
+
+        if (!mOptional)
+        {
+            cnv.fill_style(accent.opacity(mHover ? 0.13f : 0.07f));
+            cnv.fill_round_rect(b, 6.0f);
+        }
+
+        cnv.stroke_style(mOptional ? (mHover ? accent.opacity(0.6f) : ink.opacity(0.22f))
+                                   : (mHover ? accent : accent.opacity(0.6f)));
+        cnv.line_width(1.0f);
+        StrokeDashedRoundRect(cnv, b.inset(0.5f, 0.5f), 6.0f, 4.0f, 3.0f);
+
+        // The plus, 16 px in the accent (12 px in the text's colour, optional).
+        const float cy = b.top + b.height() * 0.5f;
+        const float arm = mOptional ? 5.0f : 6.0f;
+        const float px = b.left + (mOptional ? 10.0f : 12.0f) + arm;
+        const auto plusColour = mOptional ? (mHover ? ink : mTheme.TextSecondary()) : accent;
+        cnv.stroke_style(plusColour);
+        cnv.line_width(1.6f);
+        cnv.begin_path();
+        cnv.move_to({px - arm, cy});
+        cnv.line_to({px + arm, cy});
+        cnv.move_to({px, cy - arm});
+        cnv.line_to({px, cy + arm});
+        cnv.stroke();
+
+        float right = b.right - 4.0f;
+        const float left = px + arm + 10.0f;
+        const auto font = Font(mOptional ? Weight::Medium : Weight::SemiBold).size(12.0f);
+        const float promptWidth = MeasureTextWidth(mPrompt, font);
+        const auto actionFont = Font(Weight::SemiBold).size(11.0f);
+        const float actionWidth = MeasureTextWidth("Browse", actionFont) + 24.0f;
+
+        // Browse, a button-shape at the right (.resource-picker-label-action), where the prompt
+        // still reads whole beside it: the whole zone opens the library anyway.
+        if (!mOptional && right - actionWidth - 10.0f - left >= promptWidth)
+        {
+            const el::rect action{right - actionWidth, b.top + 3.0f, right, b.bottom - 3.0f};
+            cnv.fill_style(accent);
+            cnv.fill_round_rect(action, 4.0f);
+            FillText(cnv, "Browse", actionFont, mTheme.OnAccent(), action, HAlign::Centre);
+            right = action.left - 10.0f;
+        }
+
+        const auto promptColour = mOptional && !mHover ? mTheme.TextSecondary() : ink;
+        FillText(cnv, Ellipsize(cnv, mPrompt, font, std::max(0.0f, right - left)), font, promptColour,
+                 el::rect{left, b.top, right, b.bottom}, HAlign::Left);
+
+        // The drop hint after the prompt where the line has room for it.
+        if (!mOptional && !mHint.empty())
+        {
+            const auto hintFont = Font(Weight::Regular).size(10.0f);
+            const float hintLeft = left + promptWidth + 8.0f;
+
+            if (right - hintLeft >= 60.0f)
+            {
+                FillText(cnv, Ellipsize(cnv, mHint, hintFont, right - hintLeft), hintFont, mTheme.TextMuted(),
+                         el::rect{hintLeft, b.top, right, b.bottom}, HAlign::Left);
+            }
+        }
+    }
+
+  private:
+    const Theme& mTheme;
+    std::string mPrompt;
+    std::string mHint;
+    bool mOptional;
+};
+
+/// The effect header's peak rail (.default-effect-shell-meter): a 4 px strip filled green to red
+/// with the node's peak over -48..0 dBFS, faded with no reading, glowing red while clipped. A tap
+/// shows or hides the DSP status, as the web UI's meter toggle does.
+class PeakRail final : public Pressable
+{
+  public:
+    struct Reading
+    {
+        bool inactive = true;
+        bool clipped = false;
+        int hundredths = 0; // the fill in hundredths: finer steps are sub-pixel
+        int peakTenths = 0;
+        int headroomTenths = 0;
+
+        bool operator==(const Reading&) const = default;
+    };
+
+    void Set(const Reading& reading)
+    {
+        mReading = reading;
+    }
+
+    [[nodiscard]] AccessInfo Describe() const override
+    {
+        AccessInfo info = Pressable::Describe();
+        info.role = AccessRole::Button;
+        info.name = NameOr("Toggle DSP status");
+
+        if (mReading.inactive)
+        {
+            info.value = "No diagnostics data for this node";
+        }
+        else
+        {
+            char text[96];
+            std::snprintf(text, sizeof text, "Node peak: %.1f dBFS, Headroom: %.1f dB", mReading.peakTenths / 10.0,
+                          mReading.headroomTenths / 10.0);
+            info.value = text;
+        }
+
+        return info;
+    }
+
+    el::view_limits limits(const el::basic_context&) const override
+    {
+        return {{24.0f, 16.0f}, {el::full_extent, 16.0f}};
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        NoteDrawn(ctx);
+        auto& cnv = ctx.canvas;
+        const float cy = ctx.bounds.top + ctx.bounds.height() * 0.5f;
+        const el::rect strip{ctx.bounds.left, cy - 2.0f, ctx.bounds.right, cy + 2.0f};
+        auto group = cnv.new_group(mReading.inactive ? 0.45f : 1.0f);
+
+        if (mReading.clipped)
+        {
+            auto state = cnv.new_state();
+            cnv.shadow_style(el::point{0.0f, 0.0f}, 9.0f, el::rgba(255, 94, 94, 40));
+            cnv.fill_style(el::rgba(255, 110, 110, 31));
+            cnv.fill_round_rect(strip.inset(-1.0f, -1.0f), 3.0f);
+        }
+
+        const float fill = strip.width() * static_cast<float>(mReading.hundredths) / 100.0f;
+
+        if (fill >= 0.5f)
+        {
+            // The gradient spans the filled length, as the web's background-size scales it.
+            cycfi::artist::canvas::linear_gradient ramp{el::point{strip.left, cy}, el::point{strip.left + fill, cy}};
+            ramp.add_color_stop(0.0f, el::rgba(72, 222, 170, 140));
+            ramp.add_color_stop(1.0f, el::rgba(255, 94, 94, 235));
+            cnv.fill_style(ramp);
+            cnv.fill_round_rect(el::rect{strip.left, strip.top, strip.left + fill, strip.bottom}, 2.0f);
+        }
+    }
+
+  private:
+    Reading mReading;
 };
 
 /// An on/off parameter (.node-param-group with a .toggle-switch): its capital label, a small
@@ -775,15 +1105,24 @@ class MiniSwitch final : public Pressable
         return info;
     }
 
+    /// A smaller switch than its own 22 x 12: the control bar's (.mini-toggle-control
+    /// .toggle-switch, 16 x 10).
+    MiniSwitch& Size(float w, float h)
+    {
+        mW = w;
+        mH = h;
+        return *this;
+    }
+
     el::view_limits limits(const el::basic_context& ctx) const override
     {
         if (!mTitle.empty())
         {
-            const float w = TitleWidth(ctx.canvas) + kTitleGap + 22.0f;
-            return {{w, 12.0f}, {el::full_extent, metrics::Hit(12.0f, 36.0f)}};
+            const float w = TitleWidth(ctx.canvas) + kTitleGap + mW;
+            return {{w, mH}, {el::full_extent, metrics::Hit(mH, 36.0f)}};
         }
 
-        return {{metrics::Hit(22.0f, metrics::kTouchFloor), 12.0f}, {metrics::Hit(22.0f), metrics::Hit(12.0f, 36.0f)}};
+        return {{metrics::Hit(mW, metrics::kTouchFloor), mH}, {metrics::Hit(mW), metrics::Hit(mH, 36.0f)}};
     }
 
     void draw(const el::context& ctx) override
@@ -796,23 +1135,31 @@ class MiniSwitch final : public Pressable
         {
             // The label and the switch, centred as one.
             const float titleW = TitleWidth(cnv);
-            const float left = b.left + std::max(0.0f, (b.width() - titleW - kTitleGap - 22.0f) * 0.5f);
+            const float left = b.left + std::max(0.0f, (b.width() - titleW - kTitleGap - mW) * 0.5f);
             FillText(cnv, mTitle, Font(Weight::SemiBold).size(mTitleSize), mTitleInk,
                      el::rect{left, b.top, left + titleW + 1.0f, b.bottom}, HAlign::Left);
             const float cy = b.top + b.height() * 0.5f;
-            b = el::rect{left + titleW + kTitleGap, cy - 6.0f, left + titleW + kTitleGap + 22.0f, cy + 6.0f};
+            b = el::rect{left + titleW + kTitleGap, cy - mH * 0.5f, left + titleW + kTitleGap + mW, cy + mH * 0.5f};
         }
         else if (metrics::Touch())
         {
-            b = metrics::Face(b, 22.0f, 12.0f);
+            b = metrics::Face(b, mW, mH);
+        }
+        else
+        {
+            // Its own size, centred in what it is given.
+            b = el::rect{b.left + (b.width() - mW) * 0.5f, b.top + (b.height() - mH) * 0.5f,
+                         b.left + (b.width() + mW) * 0.5f, b.top + (b.height() + mH) * 0.5f};
         }
 
         const float on = mMotion.Position(mOn, DrawnArea());
+        const float half = b.height() * 0.5f;
         cnv.fill_style(
             SwitchMotion::Mix(mTheme.ToggleBg().level(mHover ? 1.2f : 1.0f), mTheme.Accent().level(0.92f), on));
-        cnv.fill_round_rect(b, 6.0f);
+        cnv.fill_round_rect(b, half);
         cnv.fill_style(el::rgba(255, 255, 255, 235));
-        cnv.add_circle(cycfi::artist::circle(el::point{b.left + 6.0f + (b.width() - 12.0f) * on, b.top + 6.0f}, 4.0f));
+        cnv.add_circle(cycfi::artist::circle(
+            el::point{b.left + half + (b.width() - 2.0f * half) * on, b.top + half}, half - 2.0f));
         cnv.fill();
     }
 
@@ -835,5 +1182,6 @@ class MiniSwitch final : public Pressable
     std::string mTitle;
     float mTitleSize = 9.0f;
     el::color mTitleInk;
+    float mW = 22.0f, mH = 12.0f;
 };
 } // namespace nanoq::ui

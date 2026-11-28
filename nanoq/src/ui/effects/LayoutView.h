@@ -7,6 +7,7 @@
 // is the drawing and the gestures. Designing layouts stays in Soundshed Guitar.
 
 #include "ui/Drawn.h"
+#include "ui/input/Focus.h"
 #include "ui/widgets/Graphics.h"
 #include "ui/widgets/Layout.h"
 #include "ui/widgets/Theme.h"
@@ -58,8 +59,10 @@ struct LayoutActions
     std::function<void()> toggleBypass;
 };
 
-/// One placed control: a parameter's knob, switch or slider with its label and value.
-class LayoutControlView final : public el::element, public Drawn
+/// One placed control: a parameter's knob, switch or slider with its label and value. With
+/// focus the arrows move it as a ParamKnob's do (a list by its choices), Space or Enter flips a
+/// switch, Enter or F2 types a value, Delete resets it and the menu key opens MIDI Learn.
+class LayoutControlView final : public el::element, public Drawn, public Focusable
 {
   public:
     struct Look
@@ -72,6 +75,8 @@ class LayoutControlView final : public el::element, public Drawn
         el::color labelInk, valueInk, accent;
         float width = 80.0f;              // the wrapper's
         el::extent control{38.0f, 38.0f}; // the knob, switch or slider itself
+        /// The layout's light, when this knob or toggle casts a shadow under it.
+        std::optional<guitarfx::uiclient::LayoutControlShadow> shadow;
     };
 
     LayoutControlView(const Theme& theme, LayoutImages& images, guitarfx::uiclient::EffectParamInfo param, Look look,
@@ -93,6 +98,19 @@ class LayoutControlView final : public el::element, public Drawn
         return true;
     }
 
+    bool wants_focus() const override
+    {
+        return FocusWanted(true);
+    }
+
+    void begin_focus(focus_request req) override;
+    bool end_focus() override;
+    bool key(const el::context& ctx, el::key_info k) override;
+
+    [[nodiscard]] AccessInfo Describe() const override;
+    bool Activate(const el::rect& at) override;
+    bool SetPosition(double position) override;
+
     /// Moves the control to the node's value, unless it is being dragged. True when it changed.
     bool Update(const guitarfx::GraphNode& node);
 
@@ -105,8 +123,21 @@ class LayoutControlView final : public el::element, public Drawn
     [[nodiscard]] el::rect ControlBox(el::rect bounds) const;
     [[nodiscard]] el::rect ValueBox(el::rect bounds) const;
     void SetPosition(double position, const el::context& ctx);
+    /// Sets the value at `position` (snapped), telling the owner; true when it changed.
+    bool ApplyPosition(double position);
+    /// How many positions it has from the keyboard: a list's choices, a stepped range's steps.
+    [[nodiscard]] int KeySteps() const;
     void DrawKnob(artist::canvas& cnv, el::rect box);
     void DrawToggle(artist::canvas& cnv, el::rect box);
+    /// The knob's or toggle's shadow under the layout's light, behind it (layoutShadows.ts).
+    void DrawShadow(artist::canvas& cnv, el::rect box);
+    /// One frame of a strip, fitted to `box`.
+    bool DrawStripFrame(artist::canvas& cnv, const guitarfx::uiclient::LayoutImageStrip& strip, int frame,
+                        el::rect box);
+    /// The slider's travel runs up its box (a tall filmstrip).
+    [[nodiscard]] bool VerticalSlider() const;
+    /// Where a press or drag at `p` puts the slider (0..1).
+    [[nodiscard]] double SliderPositionAt(el::rect box, el::point p) const;
     void DrawSlider(artist::canvas& cnv, el::rect box);
 
     const Theme& mTheme;
@@ -139,6 +170,8 @@ struct LayoutViewInput
     /// A backdrop layout's standard controls, `defaultControlsSize` big at their own scale.
     Ptr defaultControls;
     el::extent defaultControlsSize{0.0f, 0.0f};
+    /// How far they shrink to fit the layout's defaultControlsArea, on top of its scale.
+    float defaultControlsFit = 1.0f;
     /// A model or IR slot placed by the layout: the slot's row, `width` wide, or null to leave it out.
     std::function<Ptr(const guitarfx::uiclient::LayoutResourceSlot& slot, const std::string& label, float width)>
         resourceSlot;

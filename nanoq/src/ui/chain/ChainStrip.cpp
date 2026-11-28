@@ -11,6 +11,7 @@
 #include "ui/shell/Shell.h"
 
 #include "ui/chain/ChainWires.h"
+#include "ui/input/SystemPreferences.h"
 
 #include "uiclient/ChainDropRules.h"
 #include "uiclient/ChainLayout.h"
@@ -170,6 +171,33 @@ Ptr Shell::BuildChain()
         return BuildInlineMixer();
     }
 
+    // The web UI's composite editor has the engine's chain edits while it is open: an edit made
+    // here would land in the composite, so the chain waits behind a note until it is done.
+    if (mState.compositeEdit)
+    {
+        const auto name =
+            mState.compositeEdit->name.empty() ? std::string("a composite") : "\"" + mState.compositeEdit->name + "\"";
+        auto title =
+            std::make_shared<Text>(mTheme, "Editing " + name + " in Soundshed Guitar", 14.0f, Weight::SemiBold);
+        title->Colour(mTheme.Text());
+        auto detail = std::make_shared<Paragraph>(
+            mTheme,
+            "Chain edits go to the composite until it is saved or cancelled there, so the chain is put away until then.",
+            520.0f, 12.0f);
+        detail->Colour(mTheme.TextSecondary());
+        auto cancel = std::make_shared<IconButton>(mTheme, mIcons, "", IconButton::Look::Boxed);
+        cancel->Size(150, 30).Label("Cancel Editing", 12.0f);
+        cancel->onClick = [this, name] {
+            OpenConfirm("Cancel editing", "Stop editing " + name + " without saving? Its changes are lost.",
+                        "Stop editing", [this] { mSession.Commands().CancelCompositeEdit(); });
+        };
+        return Pad(
+            24, 18, 24, 18,
+            Row({Stretch(),
+                 Col({FixedHeight(24, title), VGap(4), FixedWidth(520, detail), VGap(10), Row({cancel, Stretch()})}),
+                 Stretch()}));
+    }
+
     // Each build starts from the cards and turns to tiles again only if they still do not fit.
     if (!std::exchange(mChainAutoPass, false))
     {
@@ -216,9 +244,9 @@ Ptr Shell::BuildChain()
         if (input || output)
         {
             look.name = input ? "Input" : "Output";
-            look.icon = input ? "guitar" : "output";
-            // --node-input and --node-output.
-            look.tint = input ? mTheme.Success() : el::rgba(104, 136, 168, 255);
+            // amp.svg and speaker.svg, in --node-input and --node-output.
+            look.icon = input ? "amp" : "speaker";
+            look.tint = input ? el::rgba(104, 168, 104, 255) : el::rgba(104, 136, 168, 255);
             look.width = kBoundaryWidth;
             look.canBypass = false;
             look.boundary = input ? NodeCard::Boundary::Input : NodeCard::Boundary::Output;
@@ -277,16 +305,41 @@ Ptr Shell::BuildChain()
         look.selected = nodeId == mSelectedNode;
         width = look.width;
         const bool canBypass = look.canBypass;
+        // Its tooltip, as the web's title: "name · type · badge".
+        std::string tip = look.name;
+
+        for (const auto* part : {&look.detail, &look.badge})
+        {
+            if (!part->empty())
+            {
+                tip += " \xC2\xB7 " + *part;
+            }
+        }
+
         auto card = std::make_shared<NodeCard>(mTheme, mIcons, std::move(look));
+        card->Tooltip(std::move(tip));
         card->onSelect = [this, nodeId] {
             SelectNode(nodeId);
             mChainFocused = true;
         };
         card->onMenu = [this, nodeId] { OpenNodeMenu(nodeId); };
+        card->onMove = [this, nodeId](int step) {
+            if (const auto target = MoveTarget(nodeId, step); !target.empty())
+            {
+                mSession.Commands().MoveNode(nodeId, target);
+            }
+        };
+        card->onPowerMenu = [this, nodeId](el::point at) {
+            if (const auto* n = mState.activePreset ? mState.activePreset->graph.FindNode(nodeId) : nullptr)
+            {
+                OpenNodeBypassMidiMenu(*n, at);
+            }
+        };
         // Every card is somewhere to drop; effects can be dragged, the input and output stay put.
         card->Draggable(mHitMap, nodeId);
 
-        if (card->BoundaryKind() == NodeCard::Boundary::None)
+        // Splitters and mixers stay put, as on the web (isProtectedSignalPathNode).
+        if (card->BoundaryKind() == NodeCard::Boundary::None && canBypass)
         {
             card->onDrag = [this, nodeId](el::point from, el::point to, bool done) {
                 DragCard(nodeId, from, to, done);
@@ -324,16 +377,16 @@ Ptr Shell::BuildChain()
     // A cable's +: inserts on the cable's own edge of the graph, as the web UI's connectors do,
     // which is the only way into a parallel branch; after `from` when no edge is found.
     auto plus = [this, &graph](const std::string& from, const std::string& to,
-                               int fromPort = -1) -> std::function<void()> {
+                               int fromPort = -1) -> std::function<void(el::rect)> {
         for (const auto& edge : graph.edges)
         {
             if (edge.from == from && edge.to == to && (fromPort < 0 || edge.fromPort == fromPort))
             {
-                return [this, edge] { OpenEffectPickerOnEdge(edge); };
+                return [this, edge](el::rect at) { OpenEffectPickerOnEdge(edge, at); };
             }
         }
 
-        return [this, from] { OpenEffectPicker(from); };
+        return [this, from](el::rect at) { OpenEffectPicker(from, {}, at); };
     };
     // A cable with its +, which knows its edge of the graph so a dragged card can land on it.
     auto cable = [this, &graph, &plus, rowHeight](const std::string& from, const std::string& to, int fromPort = -1,
@@ -350,17 +403,20 @@ Ptr Shell::BuildChain()
             }
         }
 
-        // Lit with the signal; the pulses move one spacing every 0.4 s, as the web UI's animation does.
+        // Lit with the signal; the pulses move one spacing every 0.4 s, as the web UI's animation
+        // does, and hold still under reduced motion (its prefers-reduced-motion rule).
         mLive.Feed(connector, [this, source = connector->Source()](Connector& c) {
             const bool live = !source.empty() && mSignalFlow.IsLive(source);
-            return c.SetFlow(live, static_cast<float>(std::fmod(UiSession::Now() / 0.4, 1.0)));
+            const double phase = ReducedMotion() ? 0.0 : std::fmod(UiSession::Now() / 0.4, 1.0);
+            return c.SetFlow(live, static_cast<float>(phase));
         });
         return connector;
     };
 
-    // ── A parallel block: the split rail, a lane per branch, the join rail. A lane runs as the
-    // main row does, so a split nested in a branch is a block inside that lane, and the lane is
-    // as tall as its branches ──
+    // ── A parallel block (parallel.css): the splitter's card, the split's routes, a lane per
+    // branch in a dashed box, the join's routes. A lane runs as the main row does, in its
+    // branch's colour, so a split nested in a branch is a block inside that lane, and the lane
+    // is as tall as its branches ──
     struct Block
     {
         std::vector<Ptr> parts;
@@ -370,15 +426,19 @@ Ptr Shell::BuildChain()
 
     std::function<Block(const ChainItem&)> parallelBlock;
 
-    const auto laneOf = [&](const ChainItem& item, const ChainBranch& branch) {
+    const auto laneOf = [&](const ChainItem& item, const ChainBranch& branch, int branchIndex) {
         Block lane;
         lane.height = rowHeight;
         std::string after = item.splitNodeId;
         bool joinsBlock = false;
+        const auto colour = BranchColour(branchIndex);
 
         // The first cable is the splitter's edge for this branch, picked out by its port.
         const auto into = [&](const std::string& to, bool stretch = false) {
-            return after == item.splitNodeId ? cable(after, to, branch.port, stretch) : cable(after, to, -1, stretch);
+            auto connector =
+                after == item.splitNodeId ? cable(after, to, branch.port, stretch) : cable(after, to, -1, stretch);
+            connector->Tint(colour);
+            return connector;
         };
 
         for (const auto& step : branch.items)
@@ -388,8 +448,9 @@ Ptr Shell::BuildChain()
                 // Into a nested block's mixer the cable is drawing only, as on the main row.
                 if (joinsBlock)
                 {
-                    auto drawing = std::make_shared<Connector>(mTheme, std::function<void()>{});
+                    auto drawing = std::make_shared<Connector>(mTheme, std::function<void(el::rect)>{});
                     drawing->RowHeight(rowHeight);
+                    drawing->Tint(colour);
                     lane.parts.push_back(drawing);
                 }
                 else
@@ -424,10 +485,11 @@ Ptr Shell::BuildChain()
         std::vector<Ptr> lanes;
         std::vector<float> laneHeights;
         float lanesWidth = 0.0f;
+        int branchIndex = 0;
 
         for (const auto& branch : item.branches)
         {
-            auto lane = laneOf(item, branch);
+            auto lane = laneOf(item, branch, branchIndex);
             lanesWidth = std::max(lanesWidth, std::max(lane.width, 2.0f * kConnectorWidth));
 
             if (!lanes.empty())
@@ -435,26 +497,37 @@ Ptr Shell::BuildChain()
                 lanes.push_back(VGap(kLaneGap));
             }
 
-            lanes.push_back(FixedHeight(lane.height, Row(lane.parts)));
-            laneHeights.push_back(lane.height);
+            // Each branch a tinted row, its cables 8 px in from its ends.
+            const float height = lane.height + 2.0f * kBranchPadY;
+            lanes.push_back(
+                FixedHeight(height, Over(Pad(kBranchPadX, kBranchPadY, kBranchPadX, kBranchPadY, Row(lane.parts)),
+                                         std::make_shared<BranchRow>(branchIndex))));
+            laneHeights.push_back(height);
+            ++branchIndex;
         }
 
-        const auto splitId = item.splitNodeId;
-        auto split =
-            std::make_shared<Rail>(mTheme, mIcons, laneCount, false, splitId == mSelectedNode, [this, splitId] {
-                SelectNode(splitId);
-                mChainFocused = true;
-            });
-        auto join = std::make_shared<Rail>(mTheme, mIcons, laneCount, true, false, std::function<void()>{});
-        split->RowHeight(rowHeight);
-        join->RowHeight(rowHeight);
+        auto split = std::make_shared<Rail>(laneCount, false);
+        auto join = std::make_shared<Rail>(laneCount, true);
+        split->RowHeight(rowHeight + 2.0f * kBranchPadY);
+        join->RowHeight(rowHeight + 2.0f * kBranchPadY);
         split->LaneHeights(laneHeights);
         join->LaneHeights(laneHeights);
 
+        // The box round the branches, 4 px off each rail.
+        constexpr float kBoxInsetX = kBranchBoxPadX + 1.0f, kBoxInsetY = kBranchBoxPadY + 1.0f;
+        const float boxWidth = lanesWidth + 2.0f * kBranchPadX + 2.0f * kBoxInsetX;
+        auto box = Pad(kBranchBoxMargin, 0.0f, kBranchBoxMargin, 0.0f,
+                       FixedWidth(boxWidth, Over(Pad(kBoxInsetX, kBoxInsetY, kBoxInsetX, kBoxInsetY, Col(lanes)),
+                                                 std::make_shared<BranchBox>(mTheme))));
+
+        // The splitter is a card of its own, as the mixer that joins the branches is.
+        float splitWidth = 0.0f;
+        auto splitter = makeCard(item.splitNodeId, splitWidth);
+
         Block block;
-        block.parts = {split, FixedWidth(lanesWidth, Col(lanes)), join};
-        block.width = kRailWidth * 2.0f + lanesWidth;
-        block.height = static_cast<float>(laneCount - 1) * kLaneGap;
+        block.parts = {splitter, split, box, join};
+        block.width = splitWidth + kRailWidth * 2.0f + boxWidth + 2.0f * kBranchBoxMargin;
+        block.height = static_cast<float>(laneCount - 1) * kLaneGap + 2.0f * kBoxInsetY;
 
         for (const float h : laneHeights)
         {
@@ -482,7 +555,7 @@ Ptr Shell::BuildChain()
         // Into a parallel block's mixer the cable is drawing only: the branches are its inputs.
         if (afterParallel)
         {
-            auto drawing = std::make_shared<Connector>(mTheme, std::function<void()>{});
+            auto drawing = std::make_shared<Connector>(mTheme, std::function<void(el::rect)>{});
             drawing->RowHeight(rowHeight);
             segment.parts.push_back(drawing);
         }
@@ -616,10 +689,11 @@ Ptr Shell::BuildChain()
     // scrolls when taller than that, and sideways when the wrap is off.
     if (Split())
     {
-        // The split stage's chain is as tall as its lines, up to a third of the window, so the
-        // editor under it keeps the rest; past that it scrolls.
+        // The split stage's chain is as tall as its lines, up to half the window (45% of the
+        // stage in the compact split), so the editor under it keeps the rest; past that it
+        // scrolls (signalPath/layout.ts SIGNAL_PATH_WRAP_MAX_SHARE, SIGNAL_PATH_SPLIT_MAX_SHARE).
         const float wanted = total + 24.0f;
-        // Unless the bar under it was dragged (chainAreaHeight), up to a third of the window;
+        // Unless the bar under it was dragged (chainAreaHeight), up to that share;
         // never less than a line, nor so much that the editor has no room.
         // As tiles it is as tall as its lines again: the drag that made them only chose them.
         float limit = mChainAreaLimit;
@@ -642,7 +716,7 @@ Ptr Shell::BuildChain()
         // Dragged, it leaves the stage 146 px for the rest (the full layout's window less 360 px,
         // as it was, with the bars taken out, so it holds for the compact frame's too).
         const float most = limit > 0.0f ? std::clamp(limit, floor, std::max(floor, StageHeight() - 146.0f))
-                                        : std::max(floor, ViewSize().y / 3.0f);
+                                        : std::max(floor, mWide ? ViewSize().y * 0.5f : StageHeight() * 0.45f);
 
         // The compact split makes room rather than falling back to Chain and Effect taking turns:
         // cards that need more lines than their share, or a short stage, give way to tiles. Not

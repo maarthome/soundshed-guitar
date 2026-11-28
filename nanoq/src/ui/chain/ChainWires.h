@@ -21,7 +21,8 @@ namespace nanoq::ui
 class Connector final : public el::element, public Drawn, public Focusable
 {
   public:
-    Connector(const Theme& theme, std::function<void()> onAdd, bool stretch = false)
+    /// `onAdd` is told where the + is (view coordinates): the chooser opens from it.
+    Connector(const Theme& theme, std::function<void(el::rect plus)> onAdd, bool stretch = false)
         : mTheme(theme), mOnAdd(std::move(onAdd)), mStretch(stretch)
     {
     }
@@ -34,7 +35,7 @@ class Connector final : public el::element, public Drawn, public Focusable
         return info;
     }
 
-    bool Activate(const el::rect&) override
+    bool Activate(const el::rect& at) override
     {
         if (!mOnAdd)
         {
@@ -42,7 +43,7 @@ class Connector final : public el::element, public Drawn, public Focusable
         }
 
         const auto add = mOnAdd;
-        add();
+        add(PlusRect(at));
         return true;
     }
 
@@ -85,6 +86,13 @@ class Connector final : public el::element, public Drawn, public Focusable
         mRowHeight = height;
     }
 
+    /// A parallel branch's cable: its route, live or not, in the branch's colour (parallel.css
+    /// sets --signal-route-color and --signal-route-hot to it).
+    void Tint(el::color colour)
+    {
+        mTint = colour;
+    }
+
     /// The node whose signal this cable carries (its edge's source), or "" for a drawing-only one.
     [[nodiscard]] std::string Source() const
     {
@@ -103,7 +111,7 @@ class Connector final : public el::element, public Drawn, public Focusable
 
     void draw(const el::context& ctx) override
     {
-        NoteDrawn(ctx);
+        NoteDrawn(ctx, ctx.bounds.inset(-14.0f, -4.0f)); // the hovered + and its glow reach past it
         auto& cnv = ctx.canvas;
         const auto b = ctx.bounds;
         const float y = b.top + b.height() * 0.5f;
@@ -119,7 +127,7 @@ class Connector final : public el::element, public Drawn, public Focusable
         // running toward what it feeds.
         if (mLive && !dropHere)
         {
-            const auto hot = el::rgba(72, 224, 120, 255);
+            const auto hot = mTint.value_or(el::rgba(72, 224, 120, 255));
             auto state = cnv.new_state();
             cnv.line_cap(artist::canvas::round);
             cnv.stroke_style(hot.opacity(0.25f));
@@ -151,7 +159,10 @@ class Connector final : public el::element, public Drawn, public Focusable
 
         // The cable (.signal-connector: 3 px, the route colour at 55%) with an arrowhead into
         // what it feeds, in the full colour; the accent where a dragged card would land.
-        const auto route = dropHere ? mTheme.Accent() : mLive ? el::rgba(72, 224, 120, 255) : CableColour(mTheme);
+        const auto route = dropHere ? mTheme.Accent()
+                           : mTint  ? *mTint
+                           : mLive  ? el::rgba(72, 224, 120, 255)
+                                    : CableColour(mTheme);
 
         if (!mLive || dropHere)
         {
@@ -179,21 +190,37 @@ class Connector final : public el::element, public Drawn, public Focusable
 
         const el::point c = PlusCentre(b);
 
-        if (mHover)
+        if (mHover || mHoverCable)
         {
-            // The add button (.signal-add-btn): 24 px, raised, a bold +.
+            // The add button (.signal-add-btn) comes up while the cable is hovered: 24 px, raised,
+            // a bold +. Under the pointer itself it grows a tenth into the accent's gradient,
+            // glowing, its + white.
+            const float r = mHover ? 11.0f * 1.1f : 11.0f;
             auto state = cnv.new_state();
-            artist::canvas::linear_gradient fill{el::point{c.x, c.y - 11.0f}, el::point{c.x, c.y + 11.0f}};
-            fill.add_color_stop(0.0f, mTheme.ButtonBg());
-            fill.add_color_stop(1.0f, mTheme.Surface());
+            artist::canvas::linear_gradient fill{el::point{c.x, c.y - r}, el::point{c.x, c.y + r}};
+
+            if (mHover)
+            {
+                cnv.shadow_style(el::point{0.0f, 0.0f}, 12.0f, el::rgba(224, 120, 72, 128));
+                fill.add_color_stop(0.0f, mTheme.Accent());
+                fill.add_color_stop(1.0f, el::rgba(200, 88, 48, 255));
+            }
+            else
+            {
+                fill.add_color_stop(0.0f, mTheme.DarkOr(el::rgba(58, 58, 68, 255), mTheme.ButtonBg()));
+                fill.add_color_stop(1.0f, mTheme.Surface());
+            }
+
             cnv.fill_style(fill);
-            cnv.add_circle(artist::circle(c, 11.0f));
+            cnv.add_circle(artist::circle(c, r));
             cnv.fill();
-            cnv.stroke_style(mTheme.ButtonBorder());
+            cnv.shadow_style(el::point{0.0f, 0.0f}, 0.0f, el::rgba(0, 0, 0, 0));
+            cnv.stroke_style(mHover ? mTheme.Accent()
+                                    : mTheme.DarkOr(el::rgba(74, 74, 88, 255), mTheme.ButtonBorder()));
             cnv.line_width(2.0f);
-            cnv.add_circle(artist::circle(c, 11.0f));
+            cnv.add_circle(artist::circle(c, r));
             cnv.stroke();
-            cnv.stroke_style(mTheme.TextSecondary());
+            cnv.stroke_style(mHover ? el::rgba(255, 255, 255, 255) : mTheme.TextSecondary());
             cnv.line_width(2.0f);
             cnv.begin_path();
             cnv.move_to(c.x - 4.5f, c.y);
@@ -230,7 +257,8 @@ class Connector final : public el::element, public Drawn, public Focusable
 
         if (!btn.down && HitsPlus(ctx, btn.pos))
         {
-            mOnAdd();
+            const auto add = mOnAdd;
+            add(PlusRect(ctx.bounds));
         }
 
         return HitsPlus(ctx, btn.pos);
@@ -238,11 +266,14 @@ class Connector final : public el::element, public Drawn, public Focusable
 
     bool cursor(const el::context& ctx, el::point p, el::cursor_tracking status) override
     {
+        const bool inside = mOnAdd && status != el::cursor_tracking::leaving && !metrics::Touch();
         const bool hover = mOnAdd && status != el::cursor_tracking::leaving && HitsPlus(ctx, p);
+        const bool cable = inside && ctx.bounds.includes(p);
 
-        if (hover != mHover)
+        if (hover != mHover || cable != mHoverCable)
         {
             mHover = hover;
+            mHoverCable = cable;
             ctx.view.refresh(ctx);
         }
 
@@ -264,6 +295,12 @@ class Connector final : public el::element, public Drawn, public Focusable
         return el::point{b.left + kConnectorWidth * 0.4f, b.top + b.height() * 0.5f};
     }
 
+    static el::rect PlusRect(const el::rect& b)
+    {
+        const auto c = PlusCentre(b);
+        return el::rect{c.x - 11.0f, c.y - 11.0f, c.x + 11.0f, c.y + 11.0f};
+    }
+
     bool HitsPlus(const el::context& ctx, el::point p) const
     {
         const auto c = PlusCentre(ctx.bounds);
@@ -278,66 +315,25 @@ class Connector final : public el::element, public Drawn, public Focusable
     }
 
     const Theme& mTheme;
-    std::function<void()> mOnAdd;
+    std::function<void(el::rect)> mOnAdd;
     bool mStretch;
-    bool mHover = false;
+    bool mHover = false, mHoverCable = false;
     std::shared_ptr<HitMap> mHits;
     std::optional<guitarfx::GraphEdge> mEdge;
     float mRowHeight = kCardHeight;
+    std::optional<el::color> mTint;
 };
 
-/// Where a parallel block splits (or joins): the cable from the main line meets a rail that
-/// reaches each branch, with the split (join) icon on it. The split's icon selects the splitter,
-/// which is where its Branches control is.
-class Rail final : public el::element, public Focusable
+/// Where a parallel block splits (or joins), between the splitter's (mixer's) card and the box of
+/// branches: each branch's route in its colour at 72% (parallel.css), out of the card's edge and
+/// round a 12 px elbow into the branch. The outer two meet their neighbours halfway across the
+/// gap; a middle one is a T. They reach on past the rail, over the box's margin and padding, to
+/// where the branch's first (last) cable starts.
+class Rail final : public el::element
 {
   public:
-    Rail(const Theme& theme, Icons& icons, int lanes, bool join, bool selected, std::function<void()> onSelect)
-        : mTheme(theme), mIcons(icons), mLanes(lanes), mJoin(join), mSelected(selected), mOnSelect(std::move(onSelect))
+    Rail(int lanes, bool join) : mLanes(lanes), mJoin(join)
     {
-    }
-
-    [[nodiscard]] AccessInfo Describe() const override
-    {
-        AccessInfo info;
-        info.role = AccessRole::ListItem;
-        info.name = NameOr(mJoin ? "Mix" : "Split");
-        info.value = std::to_string(mLanes) + " lanes";
-        info.selected = mSelected;
-        return info;
-    }
-
-    bool Activate(const el::rect&) override
-    {
-        if (!mOnSelect)
-        {
-            return false;
-        }
-
-        const auto select = mOnSelect;
-        select();
-        return true;
-    }
-
-    bool wants_focus() const override
-    {
-        return FocusWanted(mOnSelect != nullptr);
-    }
-
-    void begin_focus(focus_request) override
-    {
-        NoteFocus(true);
-    }
-
-    bool end_focus() override
-    {
-        NoteFocus(false);
-        return true;
-    }
-
-    bool key(const el::context& ctx, el::key_info k) override
-    {
-        return IsPressKey(k) && Activate(ctx.bounds);
     }
 
     /// Each lane's height: the cards' (kCardHeight), or the tiles' (kIconRowHeight).
@@ -346,8 +342,8 @@ class Rail final : public el::element, public Focusable
         mRowHeight = height;
     }
 
-    /// Lanes of their own heights, top first: a lane holding a nested split is as tall as its
-    /// branches. Unset, every lane is RowHeight.
+    /// Lanes of their own heights, top first, with each branch's padding: a lane holding a nested
+    /// split is as tall as its branches. Unset, every lane is RowHeight.
     void LaneHeights(std::vector<float> heights)
     {
         mLaneHeights = std::move(heights);
@@ -364,85 +360,56 @@ class Rail final : public el::element, public Focusable
         auto& cnv = ctx.canvas;
         const auto b = ctx.bounds;
         const float top = b.top + std::max(0.0f, (b.height() - Height()) * 0.5f);
-        const float mid = b.top + b.height() * 0.5f;
-        const float x = mJoin ? b.left + 8.0f : b.right - 8.0f; // the rail
-        const float outside = mJoin ? b.right : b.left;
-        const float inside = mJoin ? b.left : b.right;
+        const float x = mJoin ? b.right - 1.5f : b.left + 1.5f; // the spine, at the card's edge
+        const float inside = mJoin ? b.left - kBranchReach : b.right + kBranchReach;
 
-        cnv.stroke_style(CableColour(mTheme).opacity(0.55f));
-        cnv.line_width(3.0f);
-        cnv.line_join(artist::canvas::round_join);
-        cnv.begin_path();
-        cnv.move_to(outside, mid);
-        cnv.line_to(x, mid);
-        // Each lane's middle, where its cable runs.
-        std::vector<float> middles;
+        // Each lane's middle, where its route runs, and the middle of the gap under it.
+        std::vector<float> middles, gaps;
         float laneTop = top;
 
         for (int i = 0; i < mLanes; ++i)
         {
             const float h = LaneHeight(i);
             middles.push_back(laneTop + h * 0.5f);
+            gaps.push_back(laneTop + h + kLaneGap * 0.5f);
             laneTop += h + kLaneGap;
         }
 
-        if (!middles.empty())
+        auto state = cnv.new_state();
+        cnv.line_width(3.0f);
+        cnv.line_cap(artist::canvas::butt);
+        cnv.line_join(artist::canvas::round_join);
+
+        for (int i = 0; i < mLanes; ++i)
         {
-            cnv.move_to(x, middles.front());
-            cnv.line_to(x, middles.back());
+            const float m = middles[static_cast<std::size_t>(i)];
+            cnv.stroke_style(BranchColour(i).opacity(0.72f));
+            cnv.begin_path();
+
+            if (mLanes == 1)
+            {
+                cnv.move_to(mJoin ? b.right : b.left, m);
+                cnv.line_to(inside, m);
+            }
+            else if (i == 0 || i == mLanes - 1)
+            {
+                // An elbow from the spine, halfway into the gap toward its neighbour.
+                const float end = i == 0 ? gaps.front() : gaps[static_cast<std::size_t>(i - 1)];
+                const float r = std::min(12.0f, std::abs(end - m));
+                cnv.move_to(x, end);
+                cnv.arc_to(el::point{x, m}, el::point{inside, m}, r);
+                cnv.line_to(inside, m);
+            }
+            else
+            {
+                cnv.move_to(x, gaps[static_cast<std::size_t>(i - 1)]);
+                cnv.line_to(x, gaps[static_cast<std::size_t>(i)]);
+                cnv.move_to(x, m);
+                cnv.line_to(inside, m);
+            }
+
+            cnv.stroke();
         }
-
-        for (const float y : middles)
-        {
-            cnv.move_to(x, y);
-            cnv.line_to(inside, y);
-        }
-
-        cnv.stroke();
-
-        const el::point c{x, mid};
-        cnv.fill_style(mSelected ? mTheme.Elevated() : mTheme.Card());
-        cnv.add_circle(artist::circle(c, 11.0f));
-        cnv.fill();
-        cnv.stroke_style(mSelected ? mTheme.Accent() : (mHover && mOnSelect ? mTheme.Text() : mTheme.BorderStrong()));
-        cnv.line_width(mSelected ? 2.0f : 1.0f);
-        cnv.add_circle(artist::circle(c, 11.0f));
-        cnv.stroke();
-        mIcons.Draw(cnv, mJoin ? "parallel-join" : "parallel-split",
-                    el::rect{c.x - 7.0f, c.y - 7.0f, c.x + 7.0f, c.y + 7.0f}, mTheme.TextSecondary());
-    }
-
-    bool click(const el::context& ctx, el::mouse_button btn) override
-    {
-        if (!mOnSelect || btn.state != el::mouse_button::left)
-        {
-            return false;
-        }
-
-        if (!btn.down)
-        {
-            mOnSelect();
-        }
-
-        return true;
-    }
-
-    bool cursor(const el::context& ctx, el::point, el::cursor_tracking status) override
-    {
-        const bool hover = status != el::cursor_tracking::leaving;
-
-        if (hover != mHover)
-        {
-            mHover = hover;
-            ctx.view.refresh(ctx);
-        }
-
-        return false;
-    }
-
-    bool wants_control() const override
-    {
-        return static_cast<bool>(mOnSelect);
     }
 
   private:
@@ -463,14 +430,67 @@ class Rail final : public el::element, public Focusable
         return height;
     }
 
-    const Theme& mTheme;
-    Icons& mIcons;
     int mLanes;
+    bool mJoin;
     float mRowHeight = kCardHeight;
     std::vector<float> mLaneHeights;
-    bool mJoin, mSelected;
-    std::function<void()> mOnSelect;
-    bool mHover = false;
+};
+
+/// The box the branches sit in (.parallel-branches): a faint wash and a dashed border of the
+/// medium border colour at 55%, radius 8.
+class BranchBox final : public el::element
+{
+  public:
+    explicit BranchBox(const Theme& theme) : mTheme(theme)
+    {
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        auto& cnv = ctx.canvas;
+        const auto b = ctx.bounds.inset(0.5f, 0.5f);
+        cnv.fill_style(el::rgba(90, 90, 104, 20));
+        cnv.add_round_rect(b, 7.5f);
+        cnv.fill();
+        cnv.stroke_style(mTheme.BorderStrong().opacity(0.55f));
+        cnv.line_width(1.0f);
+        StrokeDashedRoundRect(cnv, b, 7.5f, 4.0f, 3.0f);
+    }
+
+  private:
+    const Theme& mTheme;
+};
+
+/// One branch's row (.parallel-branch): a wash from its colour at the left fading right, and a
+/// border of its colour at 12% over white at 6%, radius 6.
+class BranchRow final : public el::element
+{
+  public:
+    explicit BranchRow(int branch) : mColour(BranchColour(branch))
+    {
+    }
+
+    void draw(const el::context& ctx) override
+    {
+        auto& cnv = ctx.canvas;
+        const auto b = ctx.bounds.inset(0.5f, 0.5f);
+        const auto base = el::rgba(46, 46, 56, 255);
+        artist::canvas::linear_gradient wash{el::point{b.left, b.top}, el::point{b.right, b.top}};
+        wash.add_color_stop(0.0f, Mix(mColour, base, 0.05f).opacity(0.28f));
+        wash.add_color_stop(0.42f, base.opacity(0.18f));
+        wash.add_color_stop(1.0f, base.opacity(0.12f));
+        cnv.fill_style(wash);
+        cnv.add_round_rect(b, 6.0f);
+        cnv.fill();
+        const auto white = el::rgba(255, 255, 255, 255);
+        cnv.stroke_style(Mix(mColour.opacity(1.0f), white.opacity(0.06f), 0.12f));
+        cnv.line_width(1.0f);
+        cnv.add_round_rect(b, 6.0f);
+        cnv.stroke();
+    }
+
+  private:
+    el::color mColour;
 };
 
 /// The end of a wrapped line's cable: in from the left and down (`out`), or in from above and
@@ -540,9 +560,10 @@ class ReturnRoute final : public el::element
         cnv.stroke_style(CableColour(mTheme).opacity(0.55f));
         cnv.line_width(3.0f);
         cnv.begin_path();
+        const float bend = std::min(6.0f, b.height() * 0.5f);
         cnv.move_to(from, b.top);
-        cnv.arc_to(el::point{from, mid}, el::point{to, mid}, 6.0f);
-        cnv.arc_to(el::point{to, mid}, el::point{to, b.bottom}, 6.0f);
+        cnv.arc_to(el::point{from, mid}, el::point{to, mid}, bend);
+        cnv.arc_to(el::point{to, mid}, el::point{to, b.bottom}, bend);
         cnv.line_to(to, b.bottom);
         cnv.stroke();
     }

@@ -21,6 +21,7 @@
     "browseNodeResource",
     "browsePracticeToolFile",
     "browsePracticeToolTab",
+    "browseRiffImportFile",
     "browseResourceFolder",
     "browseUiBackgroundImage",
     "cancelMidiLearn",

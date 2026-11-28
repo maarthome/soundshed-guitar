@@ -45,6 +45,10 @@ class ToneService
         std::function<void(std::function<void()>)> post;
         /// Shows a transient message.
         std::function<void(const std::string& title, const std::string& detail, bool isError)> toast;
+        /// A shared preset needs Tone3000 models while the relay is off and no key is stored:
+        /// the UI asks for one (the web UI's "Tone3000 API Key Required"), then proceeds or
+        /// cancels. Unset, the install goes on and its fetches fail.
+        std::function<void(std::function<void()> proceed, std::function<void()> cancel)> needTone3000Key;
     };
 
     using Response = tones::Response;
@@ -88,6 +92,9 @@ class ToneService
     // ── Tone sharing ────────────────────────────────────────────────────────────
     void Get(const std::string& path, Callback callback);
     void Post(const std::string& path, const nlohmann::json& body, Callback callback);
+    /// PATCH with a JSON body (the profile), and DELETE (the account's own preset or pack).
+    void Patch(const std::string& path, const nlohmann::json& body, Callback callback);
+    void Delete(const std::string& path, Callback callback);
 
     /// A picture's bytes by absolute URL: null while it is being fetched (listeners hear when it
     /// arrives), empty when the fetch failed. A failed fetch is not retried.
@@ -154,6 +161,8 @@ class ToneService
     /// Every model of a tone, both the default listing (A1 and custom) and the A2 twins, in the
     /// creator's order with A2 after.
     void Tone3000Models(const std::string& toneId, ModelsCallback callback);
+    /// The player's favourite tones, a page at a time: only with their own key (the relay off).
+    void Tone3000Favourites(int page, TonesCallback callback);
     /// Tone3000's models whose content hash is `contentHash` (reposts share one), oldest first.
     void Tone3000ModelsByContentHash(const std::string& contentHash, ModelsCallback callback);
     /// One tone by its id; nullopt with no error when Tone3000 does not show it (private, deleted).
@@ -167,6 +176,17 @@ class ToneService
     /// audition plays (UiCommands::PreviewRemoteResource), as the web UI's preview fetches it.
     using DownloadCallback = std::function<void(const std::string& base64, const std::string& error)>;
     void DownloadTone3000(const tone3000::Model& model, const std::string& resourceType, DownloadCallback callback);
+
+    /// Whether Tone3000 is reached through the relay (else directly, with the player's key).
+    [[nodiscard]] bool Tone3000UsesRelay() const;
+    /// Off the relay with no key stored: nothing can be fetched until one is.
+    [[nodiscard]] bool Tone3000NeedsKey() const;
+    /// Starts a Tone3000 session with `key` (POST auth/session), as the web UI's Save does before
+    /// it keeps a key: true when Tone3000 took it.
+    void VerifyTone3000Key(const std::string& key, std::function<void(bool ok, const std::string& error)> callback);
+    /// The relay's health (GET <relay>/health), as Settings words it: "API health: OK" or
+    /// "API health: failed (...)".
+    void CheckTone3000Health(std::function<void(const std::string& status)> callback);
 
     [[nodiscard]] bool IsImporting(const std::string& modelId) const
     {
@@ -184,9 +204,19 @@ class ToneService
     };
 
     using BytesCallback = std::function<void(const HttpResult&)>;
+    using Headers = std::vector<std::pair<std::string, std::string>>;
 
     void Request(const std::string& method, const std::string& url, const std::string& jsonBody, bool json,
-                 BytesCallback done);
+                 BytesCallback done, Headers headers = {});
+    /// A tone sharing request with a JSON answer: the session it carries is kept, a dropped one
+    /// forgotten.
+    void ToneRequest(const std::string& method, const std::string& path, const std::string& body, Callback callback);
+    /// A GET on Tone3000's own API (`url` is an official one): through the relay while it is on;
+    /// off it, with a session started from the player's key, which is kept until near its expiry.
+    void Tone3000Get(const std::string& url, BytesCallback done);
+    /// A session token for `key`, started or reused; empty with an error when Tone3000 refused.
+    void Tone3000Session(const std::string& key,
+                         std::function<void(const std::string& token, const std::string& error)> done);
     void Changed();
 
     void InstallItem(const tones::Tone& tone);
@@ -230,8 +260,13 @@ class ToneService
     std::map<std::string, std::string> mImages; // url -> bytes ("" when the fetch failed)
     std::set<std::string> mImagesRequested;
     std::set<std::string> mDownloading;
-    std::map<std::string, std::string> mAwaiting;          // entry id -> title: installs sent to the engine
-    std::set<std::string> mImporting;                      // Tone3000 model ids being imported
+    std::map<std::string, std::string> mAwaiting; // entry id -> title: installs sent to the engine
+    std::set<std::string> mImporting;             // Tone3000 model ids being imported
+    // The direct Tone3000 session (relay off): its token, the key it was started with, when it
+    // lapses (steady seconds), and the requests waiting on one being started.
+    std::string mT3Token, mT3TokenKey;
+    double mT3Expiry = 0.0;
+    std::vector<std::function<void(const std::string&, const std::string&)>> mT3Waiting;
     std::map<std::string, ImportCallback> mPendingImports; // request id -> callback
     std::map<int, std::function<void()>> mListeners;
     int mNextListener = 1;

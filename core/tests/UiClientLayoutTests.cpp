@@ -9,6 +9,7 @@
 #include "uiclient/EffectLayouts.h"
 #include "uiclient/UiClient.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -229,6 +230,16 @@ void TestPreferences()
     Expect(ui::LayoutLookupKeys("amp_nam", "") == std::vector<std::string>{"amp_nam"}, "one key without a blend");
     Expect(ui::AvailableLayoutEntries(library, "amp_nam", "").size() == 2, "the entries a node can pick");
 
+    // The FX Library's card: the default layout's thumbnail, a blend's own before its effect's.
+    const auto* face = ui::DefaultLibraryLayout(library, "amp_nam");
+    Expect(face != nullptr && face->name == "Tweed Face", "the effect's default layout");
+    Expect(ui::DefaultLibraryLayout(library, "amp_nam", "blend-9") == face, "a blend without one has its effect's");
+    Expect(ui::DefaultLibraryLayout(library, "delay_digital") == nullptr, "and an effect with none, none");
+    Expect(ui::ImageDataUrlBytes("data:image/png;base64,iVBORw==") == std::string("\x89PNG"), "a picture's bytes");
+    Expect(ui::ImageDataUrlBytes("data:image/svg+xml;base64,PHN2Zz4=").empty() &&
+               ui::ImageDataUrlBytes("data:image/png;base64,ab\"c").empty() && ui::ImageDataUrlBytes("").empty(),
+           "but not a script's, a broken one's or nothing's");
+
     auto selection = Resolve(library, none, "amp_nam");
     Expect(selection.layoutId == std::optional<std::string>("tweed") && selection.source == "libraryDefault",
            "the library default when no rules exist");
@@ -361,6 +372,68 @@ void TestKnobImages()
            "sizes clamped to their ranges");
 }
 
+// The layout's own switch, knob picture and light, and the strips a toggle or slider is drawn
+// from (layoutControlImages.ts, layoutShadows.ts).
+void TestControlImagesAndShadows()
+{
+    const auto layout = ui::ParseEffectLayout(nlohmann::json::parse(R"({
+        "effectType": "x", "dimensions": {"width": 400, "height": 200},
+        "knobImage": {"mode": "filmstrip", "imageId": "sheet", "frames": 64},
+        "switchImage": {"strip": {"imageId": "sw", "frames": 2, "aspect": 0.5}, "width": 40},
+        "controlShadow": {"angle": 765, "elevation": 5, "opacity": 2},
+        "controls": [
+            {"paramKey": "a", "type": "knob", "position": {"x": 0, "y": 0}},
+            {"paramKey": "b", "type": "knob", "position": {"x": 0, "y": 0}, "style": {"knobStyle": "pedal"}},
+            {"paramKey": "c", "type": "toggle", "position": {"x": 0, "y": 0}},
+            {"paramKey": "d", "type": "toggle", "position": {"x": 0, "y": 0},
+             "style": {"toggleImage": {"onImageId": "on", "offImageId": "off"}, "castShadow": false}},
+            {"paramKey": "e", "type": "slider", "position": {"x": 0, "y": 0},
+             "style": {"sliderLength": 120, "sliderImage": {"strip": {"imageId": "fader", "frames": 32, "aspect": 4}}}},
+            {"paramKey": "f", "type": "slider", "position": {"x": 0, "y": 0},
+             "style": {"sliderImage": {"strip": {"imageId": "bad", "frames": 1}}}}
+        ]})"));
+
+    const auto& c = layout.controls;
+    Expect(c.size() == 6, "six controls");
+    Expect(ui::UsableKnobImage(c[0].style) != nullptr && c[0].style.knobImage->imageId == "sheet",
+           "a default knob takes the layout's picture");
+    Expect(ui::UsableKnobImage(c[1].style) == nullptr, "a Pedal knob keeps its own look");
+    Expect(c[2].style.toggleStrip && c[2].style.toggleStrip->imageId == "sw" && ui::UsableToggleImage(c[2].style),
+           "a plain toggle takes the layout's switch");
+    Expect(Near(ui::LayoutToggleSize(c[2].style).width, 40) && Near(ui::LayoutToggleSize(c[2].style).height, 20),
+           "the switch's width, and the strip's shape for its height");
+    Expect(!c[3].style.toggleStrip && c[3].style.toggleOnImageId == "on" && !c[3].style.castShadow,
+           "a toggle with pictures keeps them; castShadow false is read");
+    Expect(c[4].style.sliderStrip && c[4].style.sliderStrip->frames == 32, "a slider's strip");
+    const auto fader = ui::StripSliderSize(c[4].style, *c[4].style.sliderStrip);
+    Expect(fader.vertical && Near(fader.height, 120) && Near(fader.width, 30), "a tall strip runs up its length");
+    Expect(!c[5].style.sliderStrip, "a strip of one frame is not usable");
+
+    const auto ids = ui::LayoutImageIds(layout);
+    const auto has = [&ids](const char* id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
+    Expect(has("sheet") && has("sw") && has("fader") && has("on"), "the pictures the controls draw are loaded");
+
+    Expect(layout.controlShadow && Near(layout.controlShadow->angle, 45) && Near(layout.controlShadow->elevation, 15) &&
+               Near(layout.controlShadow->opacity, 1),
+           "the light's fields are held in range");
+
+    // A 38 px knob lit from the top left at 45 degrees: its shadow falls 38 px down and right.
+    ui::LayoutControlShadow light;
+    const auto shadow = ui::ControlShadowOf(light, 38, 38, 19);
+    double maxX = -1e9, maxY = -1e9;
+
+    for (const auto& p : shadow.hull)
+    {
+        maxX = std::max(maxX, p.x);
+        maxY = std::max(maxY, p.y);
+    }
+
+    Expect(Near(shadow.radius, 19) && std::abs(maxX - (19 + 38 * std::sqrt(0.5))) < 1e-6 &&
+               std::abs(maxY - (19 + 38 * std::sqrt(0.5))) < 1e-6,
+           "the footprint swept away from the light");
+    Expect(shadow.fadeTo.x > shadow.fadeFrom.x && shadow.fadeTo.y > shadow.fadeFrom.y, "it fades away from the light");
+}
+
 void TestColours()
 {
     const auto is = [](const std::optional<ui::LayoutColour>& c, int r, int g, int b, double a) {
@@ -484,6 +557,36 @@ void TestClient()
                state.appSettings[ui::kLayoutPreferencesSetting].size() == 1,
            "the layout chosen again, replacing the rule");
 
+    // The picker's scopes: a keyword rule and a preset rule beside the effect-type one, each kept
+    // apart; the keyword lower cased; a rule removed by its id.
+    ui::LayoutPreferenceRule keyword{.lookupKey = type,
+                                     .scope = "keyword",
+                                     .layoutId = ui::kStandardLayoutId,
+                                     .keyword = "  Twin ",
+                                     .presetId = "p9"};
+    mutableState.appSettings[ui::kLayoutPreferencesSetting] =
+        ui::RulesWithLayoutPreference(state.appSettings, keyword, "2026-11-28T00:00:00Z");
+    ui::LayoutPreferenceRule preset{
+        .lookupKey = type, .scope = "preset", .layoutId = "factory::chaos", .presetId = "p1", .presetName = "Crunch"};
+    mutableState.appSettings[ui::kLayoutPreferencesSetting] =
+        ui::RulesWithLayoutPreference(state.appSettings, preset, "2026-11-28T00:00:01Z");
+    auto forNode = ui::LayoutRulesForKeys(state.appSettings, ui::LayoutLookupKeys(type, ""));
+    Expect(forNode.size() == 3 && forNode[1].keyword == "twin" && forNode[1].presetId.empty() &&
+               ui::LayoutRuleScopeLabel(forNode[1]) == "Matching \"twin\"" &&
+               ui::LayoutRuleScopeLabel(forNode[2]) == "Preset: Crunch" &&
+               ui::LayoutRuleScopeLabel(forNode[0]) == "This effect type",
+           "three rules, one per scope");
+    Expect(ui::LayoutRulesForKeys(state.appSettings, {"delay_digital"}).empty(), "none for another effect");
+    mutableState.appSettings[ui::kLayoutPreferencesSetting] =
+        ui::RulesWithoutLayoutPreference(state.appSettings, forNode[1].id);
+    Expect(ui::LayoutRulesForKeys(state.appSettings, {type}).size() == 2, "a rule removed by its id");
+    Expect(ui::SuggestLayoutKeywords("Fender Twin Reverb clean 65 amp ac30 twin", 6) ==
+               std::vector<std::string>{"fender", "twin", "reverb", "ac30"},
+           "keywords from the names: no common words, numbers or repeats");
+    Expect(ui::LayoutSourceNote({.source = "keyword", .rule = forNode[1]}) ==
+               "Currently set by the \"twin\" keyword rule.",
+           "the source note");
+
     client.RequestLayoutImages();
     client.RequestLayoutImages();
     Expect(sent.size() == 1 && nlohmann::json::parse(sent[0]).value("type", "") == "requestLayoutImages",
@@ -511,6 +614,7 @@ int main()
     TestPreferences();
     TestScaling();
     TestKnobImages();
+    TestControlImagesAndShadows();
     TestColours();
     TestControls();
     TestClient();

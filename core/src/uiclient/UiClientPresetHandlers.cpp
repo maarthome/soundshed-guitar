@@ -57,6 +57,12 @@ void ApplyMixer(ClientState& state, const nlohmann::json& mixer)
     state.mixer.masterGain = mixer.value("masterGain", 1.0);
     state.mixer.mixGainDb = mixer.value("mixGainDb", 0.0);
     state.mixer.limiterEnabled = mixer.value("limiterEnabled", false);
+
+    if (const auto unity = mixer.find("monoOutputUnity"); unity != mixer.end() && unity->is_boolean())
+    {
+        state.mixer.monoOutputUnity = unity->get<bool>();
+    }
+
     state.mixer.activePresetIds = parse::StringArray(mixer, "activePresetIds");
     state.mixer.presetNames.clear();
     state.mixer.slots.clear();
@@ -219,6 +225,7 @@ void UiClient::RegisterPresetHandlers()
             s.activePreset = parse::ParsePreset(m["preset"]);
             s.activePresetId = m.value("activePresetId", s.activePreset ? s.activePreset->id : std::string{});
             s.activeSceneId = m.value("activeSceneId", std::string{});
+            s.UseActiveSceneGraph();
             Notify(Topic::ActivePreset);
         }
 
@@ -264,6 +271,11 @@ void UiClient::RegisterPresetHandlers()
             }
 
             // The blends a blend node can name: their name, mode and how many models they hold.
+            if (const auto saved = m.find("customEffectLibrary"); saved != m.end())
+            {
+                s.customEffects = parse::CustomEffectLibrary(*saved);
+            }
+
             s.blends.clear();
 
             if (m.contains("blendLibrary") && m["blendLibrary"].is_array())
@@ -279,6 +291,11 @@ void UiClient::RegisterPresetHandlers()
                     blend.id = b["id"].get<std::string>();
                     blend.name = b.value("name", blend.id);
 
+                    if (const auto c = b.find("category"); c != b.end() && c->is_string())
+                    {
+                        blend.category = c->get<std::string>();
+                    }
+
                     if (b.value("blendMode", std::string()) == "snap")
                     {
                         blend.blendMode = "snap";
@@ -290,6 +307,61 @@ void UiClient::RegisterPresetHandlers()
                                            ? mappings->size()
                                        : models != b.end() && models->is_array() ? models->size()
                                                                                  : 0;
+
+                    if (mappings != b.end() && mappings->is_array() && !mappings->empty())
+                    {
+                        for (const auto& raw : *mappings)
+                        {
+                            if (!raw.is_object() || !raw.contains("id") || !raw["id"].is_string())
+                            {
+                                continue;
+                            }
+
+                            BlendModelMapping mapping;
+                            mapping.modelId = raw["id"].get<std::string>();
+                            mapping.parameterId = raw.value("parameterId", std::string());
+
+                            if (const auto v = raw.find("parameterValue"); v != raw.end() && v->is_number())
+                            {
+                                mapping.parameterValue = v->get<double>();
+                            }
+
+                            if (const auto ps = raw.find("parameters"); ps != raw.end() && ps->is_object())
+                            {
+                                for (const auto& [key, value] : ps->items())
+                                {
+                                    if (value.is_number())
+                                    {
+                                        mapping.parameters[key] = value.get<double>();
+                                    }
+                                }
+                            }
+
+                            blend.mappings.push_back(std::move(mapping));
+                        }
+                    }
+                    else if (models != b.end() && models->is_array())
+                    {
+                        for (const auto& id : *models)
+                        {
+                            if (id.is_string())
+                            {
+                                blend.mappings.push_back({id.get<std::string>(), {}, std::nullopt, {}});
+                            }
+                        }
+                    }
+
+                    if (const auto ps = b.find("parameters"); ps != b.end() && ps->is_array())
+                    {
+                        for (const auto& id : *ps)
+                        {
+                            if (id.is_string())
+                            {
+                                blend.parameters.push_back(id.get<std::string>());
+                            }
+                        }
+                    }
+
                     s.blends.push_back(std::move(blend));
                 }
             }
@@ -353,6 +425,7 @@ void UiClient::RegisterPresetHandlers()
         }
 
         s.activeSceneId = m.value("sceneId", s.activeSceneId);
+        s.UseActiveSceneGraph();
         s.activePresetDirty = m.value("activePresetDirty", false);
 
         if (m.contains("activePresetIds"))
@@ -361,6 +434,17 @@ void UiClient::RegisterPresetHandlers()
             Notify(Topic::Mixer);
         }
 
+        Notify(Topic::ActivePreset);
+    });
+
+    // ── Composite edit mode (the web UI's composite editor) ──────────────────
+    On("compositeEditState", [this](const nlohmann::json& m) {
+        mState.compositeEdit =
+            ClientState::CompositeEdit{m.value("compositeId", std::string()), m.value("name", std::string())};
+        Notify(Topic::ActivePreset);
+    });
+    On("compositeEditModeExited", [this](const nlohmann::json&) {
+        mState.compositeEdit.reset();
         Notify(Topic::ActivePreset);
     });
 
@@ -426,6 +510,7 @@ void UiClient::RegisterPresetHandlers()
         }
 
         s.activeSceneId = m.value("sceneId", s.activeSceneId);
+        s.UseActiveSceneGraph();
         s.activePresetDirty = false;
         Notify(Topic::ActivePreset);
         PostNotification({Notification::Kind::Info, "Preset saved", s.activePreset ? s.activePreset->name : ""});

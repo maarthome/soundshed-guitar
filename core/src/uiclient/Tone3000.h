@@ -15,12 +15,23 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace guitarfx::uiclient::tone3000
 {
 inline constexpr const char* kProxyBase = "https://api-guitar.soundshed.com/v1/resourcesearch";
+/// Tone3000's own API, used with the player's own key while the relay is off.
+inline constexpr const char* kOfficialBase = "https://www.tone3000.com/api/v1";
+/// On (the default): requests go through the relay. Off: straight to Tone3000 with `kApiKeySetting`.
+inline constexpr const char* kUseRelaySetting = "tone3000.useSoundshedToneSearchApi";
+inline constexpr const char* kApiKeySetting = "tone3000.apiKey";
+
+/// Whether requests go through the relay: unless the setting is false.
+[[nodiscard]] bool UsesRelay(const nlohmann::json& appSettings);
+/// The stored key, trimmed; empty for none.
+[[nodiscard]] std::string ApiKey(const nlohmann::json& appSettings);
 
 /// Results a search page holds, and the models one page of a tone holds, as the web UI asks.
 inline constexpr int kSearchPageSize = 20;
@@ -42,7 +53,7 @@ struct Tone
     std::string creatorId, creatorName, creatorUsername, creatorUrl;
     int modelsCount = 0;
     int irsCount = 0;
-    std::int64_t downloads = 0;
+    std::int64_t downloads = -1; // -1 when not known (a tone rebuilt from an import's metadata)
     std::vector<std::string> tags;
 };
 
@@ -76,7 +87,11 @@ template <typename T> struct Page
 [[nodiscard]] std::string ModelLookupPath(const std::string& contentHash);
 /// One tone by its id.
 [[nodiscard]] std::string TonePath(const std::string& toneId);
+/// The player's favourite tones (tones/favorited), on Tone3000's own API with their own key.
+[[nodiscard]] std::string FavoritesPath(int page, int pageSize = kSearchPageSize);
 [[nodiscard]] std::string Url(const std::string& path);
+/// A path on Tone3000's own API.
+[[nodiscard]] std::string OfficialUrl(const std::string& path);
 
 /// A URL Tone3000 gave on its own API (a model's `model_url`,
 /// https://www.tone3000.com/api/v1/models/<id>/download/...), moved onto the relay, which adds
@@ -94,9 +109,26 @@ template <typename T> struct Page
 /// one file of a zip), as the web UI names it, so either UI finds the other's import.
 [[nodiscard]] std::string LibraryId(const Model& model, const std::string& zipEntry = {});
 
+/// A count as the web UI's toLocaleString writes it: "1,234,567".
+[[nodiscard]] std::string FormatCount(std::int64_t count);
+/// A tone's line under its title (renderToneMetaParts): its gear when `withGear` (favourites span
+/// every gear), "by" its uploader, how many models (`modelCount`, or the tone's own count when
+/// negative; IRs for an IR tone), its downloads and its platform, joined by middle dots.
+[[nodiscard]] std::string ToneMetaLine(const Tone& tone, const std::string& resourceType, int modelCount,
+                                       bool withGear);
+/// The tone's import badge (renderToneBadge): with its models known, "Imported" when all are in
+/// the library, else "k/n imported"; before that, how many of the library's entries came from it,
+/// "k imported"; empty when none.
+[[nodiscard]] std::string ToneImportedBadge(const ClientState& state, const std::string& resourceType, const Tone& tone,
+                                            const std::vector<Model>* models);
+
 /// The library entry a model was imported as, by its id or the model id its metadata records.
 [[nodiscard]] const LibraryResource* FindImported(const ClientState& state, const std::string& resourceType,
                                                   const Model& model);
+
+/// The tone a library entry was imported from (its toneId or groupId), for the browser to open
+/// on, as the web UI's tone3000ToneFromResource; nothing for an entry not from Tone3000.
+[[nodiscard]] std::optional<Tone> SourceToneOf(const LibraryResource& resource);
 
 /// The importRemoteResource payload for a model's bytes (base64 in `data`).
 [[nodiscard]] nlohmann::json ImportPayload(const Tone& tone, const Model& model, const std::string& resourceType,
