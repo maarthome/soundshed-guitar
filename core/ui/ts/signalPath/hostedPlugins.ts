@@ -357,15 +357,12 @@ export function handleNodeResourceBrowseCancelled(payload: {
  * "Open plugin" in its panel. A node with no plugin chosen yet has nothing to open: its panel
  * shows the list to choose from.
  */
-/** True for a plugin-host node that has a plugin loaded, i.e. one whose own window can be opened. */
-export function hasHostedPluginWindow(node: GraphNode): boolean {
-  if (EffectTypeRegistry.resolve(node.type) !== EffectGuids.kPluginHost) return false;
-  const resource = getNodeResourceAtIndex(node, 0);
-  return !!(resource.id || resource.filePath);
-}
-
 export function openHostedPluginEditorOnClick(node: GraphNode): void {
-  if (hasHostedPluginWindow(node)) {
+  if (EffectTypeRegistry.resolve(node.type) !== EffectGuids.kPluginHost) {
+    return;
+  }
+  const resource = getNodeResourceAtIndex(node, 0);
+  if (resource.id || resource.filePath) {
     sendSignalPathNodeConfigUpdate(node.id, "showPluginEditor", "1", false);
   }
 }
