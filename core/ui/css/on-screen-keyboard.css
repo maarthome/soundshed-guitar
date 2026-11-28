@@ -1,0 +1,107 @@
+/* The on-screen keyboard (ts/onScreenKeyboard.ts): docked along the bottom of the window, over
+   everything else, while a text or number field is being edited. */
+
+.osk {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-secondary, #1c1c22);
+  border-top: 1px solid var(--border-medium, #3a3a48);
+  box-shadow: 0 -6px 18px color-mix(in srgb, black 40%, transparent);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.osk[hidden] {
+  display: none;
+}
+
+.osk-row {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.osk-key {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border-medium, #3a3a48);
+  border-radius: 8px;
+  background: var(--bg-card, #26262e);
+  color: var(--text-primary, #eee);
+  font: inherit;
+  font-size: 17px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.osk-key:active {
+  background: var(--color-accent, #f0a24c);
+  color: var(--bg-primary, #111);
+}
+
+.osk-key-fn {
+  flex-grow: 1.5;
+  font-size: 15px;
+}
+
+.osk-key-space {
+  flex-grow: 5;
+}
+
+.osk-key-done {
+  flex-grow: 2;
+  background: var(--color-accent, #f0a24c);
+  color: var(--bg-primary, #111);
+  font-weight: 600;
+}
+
+.osk-key[aria-pressed="true"] {
+  background: var(--color-accent, #f0a24c);
+  color: var(--bg-primary, #111);
+}
+
+/* The number pad: wide keys, in a narrower block in the middle. */
+.osk[data-layout="numeric"] {
+  align-items: center;
+}
+
+.osk[data-layout="numeric"] .osk-row {
+  width: min(420px, 100%);
+}
+
+.osk[data-layout="numeric"] .osk-key {
+  height: 44px;
+  font-size: 20px;
+}
+
+/* On a small screen the keys shrink so the keyboard leaves room for the field above it. */
+@media (max-height: 520px) {
+  .osk {
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .osk-key {
+    height: 34px;
+    font-size: 16px;
+  }
+
+  .osk[data-layout="numeric"] .osk-key {
+    height: 36px;
+  }
+}
+
+/* Room for it: what scrolls gets a margin as tall as the keyboard. */
+html.osk-open body {
+  padding-bottom: var(--osk-height, 0);
+}

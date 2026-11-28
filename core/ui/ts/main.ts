@@ -2,6 +2,7 @@
 import "./legacyWebKit.js";
 import { initializeControls, initializeAmpCabPowerControls, refreshEqModalVisualization } from "./controls.js";
 import { initializeInputModeControls } from "./inputMode.js";
+import { initOnScreenKeyboard } from "./onScreenKeyboard.js";
 import { initializeOutputStatusReadout } from "./outputStatus.js";
 import {
   initializePresetControls,
@@ -251,6 +252,7 @@ async function bootstrap(): Promise<void> {
   activateTab("details");
   initializeControls();
   initializeInputModeControls();
+  initOnScreenKeyboard();
   initializeOutputStatusReadout();
   initializeAmpCabPowerControls();
   initializePresetControls();

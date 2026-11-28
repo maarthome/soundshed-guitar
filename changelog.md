@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+* **Chain: tapping a hosted plugin opens its own window (my_gui)**: tapping a plugin-host box in the signal chain selects it and opens the plugin's own window straight away, like pressing Open plugin.
+* **On-screen keyboard for typing (my_gui)**: tapping a text or number field now brings up a keyboard docked at the bottom of the screen: a number pad for values, letters, capitals and symbols for names, with Done to finish. Settings has an **On-screen keyboard** choice: **Auto** (small and touch screens), **Always** or **Off**.
 * **Readable text on coloured effect boxes (my_gui)**: with Effect box colours on User, an effect's name and type line are drawn in the clear text colour with a soft shadow, instead of the dim grey that was hard to read on red, orange and yellow boxes. Bypassed boxes keep their dimmed look.
 * **Linux builds use ccache when it is installed (my_gui)**: `build_linux.sh` and `build_pi.sh` now compile through ccache if it is there, so a rebuild after a merge only compiles what changed. `GUITARFX_NO_CCACHE=1` turns it off.
 * **Hosted plugin colours survive a restart (my_gui)**: after restarting, plugins in the plugin host are coloured by their group again right away, instead of staying grey until chosen again.
