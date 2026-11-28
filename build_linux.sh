@@ -506,6 +506,18 @@ build_for_arch() {
             configure_args+=( -DCMAKE_TOOLCHAIN_FILE="$toolchain_file" )
         fi
 
+        # ccache, when installed, reuses the result of any compile it has seen before: after a
+        # merge or a clean build only what really changed is compiled again. The cache is
+        # capped by ccache itself (default 5 GB; "ccache -M 2G" lowers it). GUITARFX_NO_CCACHE=1
+        # builds without it. A launcher is part of the configure, so a build tree switches
+        # when this step runs again.
+        if [[ -z "${GUITARFX_NO_CCACHE:-}" ]] && command -v ccache >/dev/null 2>&1; then
+            configure_args+=( -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache )
+            echo "  Using ccache ($(ccache --version | head -n1))"
+        else
+            configure_args+=( -UCMAKE_C_COMPILER_LAUNCHER -UCMAKE_CXX_COMPILER_LAUNCHER )
+        fi
+
         cmake "${configure_args[@]}"
         echo "  ✓ Configure complete"
     fi
