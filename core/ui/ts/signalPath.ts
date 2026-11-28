@@ -71,7 +71,7 @@ export { showEngineNodeParamChange } from "./signalPath/engineParamChange.js";
 export { initSignalPathResize } from "./signalPath/layout.js";
 export { getSignalPathScrollHeight, scheduleSignalPathLayoutAdapt, setSignalPathScrollHeight, updateSignalPathLayoutAdapt } from "./signalPath/layout.js";
 export { handleHostedPluginResourceLoadCompleted, handleHostedPluginResourceLoadFailed, handleNodeResourceBrowseCancelled } from "./signalPath/hostedPlugins.js";
-import { openHostedPluginEditorOnClick } from "./signalPath/hostedPlugins.js";
+import { hasHostedPluginWindow, openHostedPluginEditorOnClick } from "./signalPath/hostedPlugins.js";
 export { updateSelectedNodeAnalyzerPanel, updateSelectedNodeDspStatus, updateSelectedNodePeakMeter, updateSignalPathClipIndicators } from "./signalPath/telemetry.js";
 export { isNodeBypassed };
 export { initializeBlendEditorModal, openBlendEditorWithDefinition } from "./signalPathBlend.js";
@@ -1055,9 +1055,8 @@ function bindNodeClickHandlers(preset: Preset): void {
     forgetExpectedAddedNode();
     setSelectedNodeId(node.id);
     showNodeParamsPanel(node, preset);
-    // Compact shows the chain and the params panel one at a time, so picking a
-    // node here has to bring its controls forward or the tap looks like a no-op.
-    revealCompactNodeDetail();
+    // Compact shows one of chain/params at a time; a hosted plugin opens its own window, so stay on the chain.
+    if (!hasHostedPluginWindow(node)) revealCompactNodeDetail();
 
       nodeElements.forEach((n) => n.classList.remove("selected"));
       el.classList.add("selected");
