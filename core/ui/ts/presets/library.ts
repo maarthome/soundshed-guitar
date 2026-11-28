@@ -18,7 +18,7 @@ import { activeTagFilters, filterPresets, refilterPresets } from "./filter.js";
 import { movePresetFolder, setActivePresetFolder, syncPresetFolderToolbarState } from "./folderControls.js";
 import { presetLibraryPopover } from "./dom.js";
 import { syncPresetFolderPickerLabel } from "./folderPicker.js";
-import { applyPresetFromLibrary, bindLoadButtons, requestSignalPathTest } from "./load.js";
+import { applyPresetAndShowChain, applyPresetFromLibrary, bindLoadButtons, requestSignalPathTest } from "./load.js";
 import { closePresetLibraryPopover, takePresetChooserOverride } from "./popover.js";
 import { notifyPresetUIRendered, setPresetUIRenderer } from "./refresh.js";
 import { updatePresetFolderExportButtons } from "./toolbar.js";
@@ -66,7 +66,10 @@ function renderPresetRows(): void {
       closePresetLibraryPopover();
       return;
     }
-    await applyPresetFromLibrary(presetId);
+    // Choosing a preset here is for playing it: the list closes on the chain.
+    if (await applyPresetAndShowChain(presetId)) {
+      closePresetLibraryPopover();
+    }
   }, {
     folders: sortPresetFoldersAlphabetically(uiState.presetFolders ?? []),
     activeFolderId: uiState.activePresetFolderId ?? PRESET_FOLDER_ALL_ID,

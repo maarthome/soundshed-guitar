@@ -7,6 +7,7 @@ import { postMessage } from "../bridge.js";
 import { REMOTE_BASE_URL, getDefaultPresets } from "../dataLibraries.js";
 import { showConfirm } from "../dialogs.js";
 import { appendLog } from "../logging.js";
+import { showChainView } from "../navigation.js";
 import { clearNotification, showNotification } from "../notifications.js";
 import { setFavoriteToggleState } from "../presets/favorites.js";
 import { requestPresetFromBackend } from "../presets/fetch.js";
@@ -233,6 +234,20 @@ export async function applyPresetFromLibrary(presetId: string): Promise<void> {
     console.error("Failed to apply preset", error);
     showNotification("Failed to apply preset", error instanceof Error ? error.message : "Unknown error");
   }
+}
+
+/**
+ * Loads a preset chosen in a list and goes on to the signal chain, which is what choosing a
+ * preset is for. True when it went ahead; a declined discard prompt stays on the list.
+ */
+export async function applyPresetAndShowChain(presetId: string): Promise<boolean> {
+  await applyPresetFromLibrary(presetId);
+  const wentAhead =
+    uiState.presetLoadingId === presetId || (uiState.activePresetId === presetId && !uiState.presetDirty);
+  if (wentAhead) {
+    showChainView();
+  }
+  return wentAhead;
 }
 
 export async function loadPresetIndex(): Promise<void> {
