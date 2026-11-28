@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+* **Screen keyboard for plugin windows on the Pi kiosk (my_gui)**: a hosted plugin's own window (ToobML, say) is drawn by the plugin, so Soundshed's on-screen keyboard cannot reach it. When `wvkbd` is installed (`sudo apt install wvkbd`), `run_pi_kiosk.sh` starts it hidden, and a double tap on the plugin window's title bar (or a tap on its icon) shows and hides it. Whether a plugin's own fields take typed numbers is up to the plugin.
 * **Chain: tapping a hosted plugin opens its own window (my_gui)**: tapping a plugin-host box in the signal chain selects it and opens the plugin's own window straight away, like pressing Open plugin.
 * **On-screen keyboard for typing (my_gui)**: tapping a text or number field now brings up a keyboard docked at the bottom of the screen: a number pad for values, letters, capitals and symbols for names, with Done to finish. Settings has an **On-screen keyboard** choice: **Auto** (small and touch screens), **Always** or **Off**. It closes when you tap anywhere that is not a field, when the field goes away, when another window (a plugin's) takes focus, and on Escape.
 * **Readable text on coloured effect boxes (my_gui)**: with Effect box colours on User, an effect's name and type line are drawn in the clear text colour with a soft shadow, instead of the dim grey that was hard to read on red, orange and yellow boxes. Bypassed boxes keep their dimmed look.

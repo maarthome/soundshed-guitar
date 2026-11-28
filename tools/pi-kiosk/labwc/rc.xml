@@ -9,8 +9,24 @@
 
   The title is matched as well as the class so that other windows the app opens
   (a hosted plugin's editor, a dialog) keep their title bar and their own size.
+
+  The screen keyboard (wvkbd, started hidden by run_pi_kiosk.sh when installed) is shown and
+  hidden by a double click on a window's title bar, or a click on its icon. A double tap
+  counts when labwc turns touches into mouse clicks. The signal SIGRTMIN toggles wvkbd.
 -->
 <labwc_config>
+  <mouse>
+    <context name="Title">
+      <mousebind button="Left" action="DoubleClick">
+        <action name="Execute" command="pkill -RTMIN -x wvkbd-mobintl" />
+      </mousebind>
+    </context>
+    <context name="Icon">
+      <mousebind button="Left" action="Click">
+        <action name="Execute" command="pkill -RTMIN -x wvkbd-mobintl" />
+      </mousebind>
+    </context>
+  </mouse>
   <windowRules>
     <windowRule identifier="Soundshed Guitar" title="Soundshed Guitar" serverDecoration="no">
       <action name="Maximize" direction="both" />

@@ -23,6 +23,9 @@
 #   SOUNDSHED_AUDIO_PRIO
 #                   Realtime priority of the app's audio thread, 1 to 95 (default: 70)
 #
+# If wvkbd is installed (sudo apt install wvkbd) a screen keyboard is started hidden, for typing
+# into a hosted plugin's own window. Double-tap that window's title bar to show or hide it.
+#
 # Starting also sets the CPU governor to "performance". Left to save power, the Pi slows its
 # clock when the load is low and is then late with an audio block now and then. It stays
 # that way until the next reboot.
@@ -68,8 +71,16 @@ start() {
     # labwc runs its startup command through a shell, so quote every word. When the app ends
     # (EXIT APP on the rail's power button, or a crash) labwc goes too, so the kiosk stops
     # rather than leaving an empty screen; `labwc --exit` finds this labwc through LABWC_PID.
-    local app_cmd
-    app_cmd="$(printf '%q ' "$APP" --kiosk "$@"); labwc --exit"
+    local app_cmd keyboard_cmd=""
+    # The screen keyboard for windows Soundshed does not draw itself, such as a hosted
+    # plugin's own window. It starts hidden; double-tap that window's title bar to show or
+    # hide it (see tools/pi-kiosk/labwc/rc.xml). Without it the kiosk works as before.
+    if command -v wvkbd-mobintl >/dev/null 2>&1; then
+        keyboard_cmd="wvkbd-mobintl --hidden -L 190 & "
+    else
+        echo "  (No screen keyboard for plugin windows: sudo apt install wvkbd)"
+    fi
+    app_cmd="${keyboard_cmd}$(printf '%q ' "$APP" --kiosk "$@"); labwc --exit"
 
     if [[ ! "$AUDIO_PRIO" =~ ^[0-9]+$ || "$AUDIO_PRIO" -lt 1 || "$AUDIO_PRIO" -gt 95 ]]; then
         echo "SOUNDSHED_AUDIO_PRIO must be a number from 1 to 95 (received: '${AUDIO_PRIO}')." >&2
