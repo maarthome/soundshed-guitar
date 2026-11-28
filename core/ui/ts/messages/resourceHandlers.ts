@@ -132,9 +132,13 @@ export function onHostedPluginResourceLoadFailed(payload: IncomingPayload): void
 
 export function onHostedPluginResourceLoadCompleted(payload: IncomingPayload): void {
   // The plugin's kind (LV2 class, VST3 sub-categories) colours its box: ts/effectGroups.ts.
-  const { nodeId, pluginCategory } = payload as { nodeId?: unknown; pluginCategory?: unknown };
+  const { nodeId, pluginCategory, resourceId } = payload as {
+    nodeId?: unknown;
+    pluginCategory?: unknown;
+    resourceId?: unknown;
+  };
   if (typeof nodeId === "string" && typeof pluginCategory === "string") {
-    notePluginCategory(nodeId, pluginCategory);
+    notePluginCategory(nodeId, pluginCategory, typeof resourceId === "string" ? resourceId : undefined);
   }
   handleHostedPluginResourceLoadCompleted(payload as {
     nodeId?: string;

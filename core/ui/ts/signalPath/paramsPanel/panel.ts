@@ -22,7 +22,7 @@ import { shouldShowFullRigCabModelNote } from "../chainRules.js";
 import { bindEffectPresetsButton } from "../effectPresets.js";
 import { bindLayoutSwitchButton, renderLayoutSwitchButtonHtml } from "../layoutSwitch.js";
 import { buildCustomEffectActions, buildNodeLayoutMatchText, getNodeArchitectureBadge, getNodeAutomaticName, getNodeDisplayName, getNodeNamCalibrationMetadataChip, getNodeUserTitle } from "../nodeLabels.js";
-import { getNodeCategory, isNeuralModelNode } from "../nodeTypes.js";
+import { getNodeCategory, getNodeEffectGroup, isNeuralModelNode } from "../nodeTypes.js";
 import { bindEquipmentImageFallback, bindResourceControls } from "../resourceControls.js";
 import { analyzerSpectrogramHistoryByNode, getSelectedNodeDspStatusNodeId, nodeParamsPanelElement, setLastSelectedNode, setSelectedNodeDspStatusNodeId } from "../state.js";
 import { bindSelectedNodeDspStatusToggle, isDspStatusVisible, resetDspStatusAverages, updateSelectedNodeAnalyzerPanel, updateSelectedNodeDspStatus, updateSelectedNodePeakMeter } from "../telemetry.js";
@@ -415,6 +415,10 @@ export function showNodeParamsPanel(node: GraphNode, preset: Preset): void {
   // standard auto-generated controls are rendered on top rather than positioned controls.
   const useDefaultControls = customLayout?.useDefaultControls === true;
   const hasCustomLayoutPresentation = Boolean(customLayout);
+  // A hosted plugin's editor takes its group colour like its chain box (css/effect-groups.css).
+  const hostedGroupAttrs = node.type === EffectGuids.kPluginHost
+    ? ` data-host-node-id="${escapeHtml(node.id)}" data-effect-group="${getNodeEffectGroup(node)}"`
+    : "";
 
   const customLayoutHtml = customLayout && !useDefaultControls
     ? renderCustomLayout(node, customLayout, paramDefs, customLayoutResourceControls)
@@ -581,7 +585,7 @@ export function showNodeParamsPanel(node: GraphNode, preset: Preset): void {
   nodeParamsPanelElement.innerHTML = `
 
     <div class="node-params-body">
-      <section class="default-effect-shell${isNeuralModel ? " neural-model-effect" : ""}${isNodeBypassed(node) ? " is-bypassed" : ""}${hasCustomLayoutPresentation ? " has-custom-layout" : ""}">
+      <section${hostedGroupAttrs} class="default-effect-shell${isNeuralModel ? " neural-model-effect" : ""}${isNodeBypassed(node) ? " is-bypassed" : ""}${hasCustomLayoutPresentation ? " has-custom-layout" : ""}">
         <div class="default-effect-shell-header">
           <div class="default-effect-shell-identity">
             <span class="default-effect-shell-led" aria-hidden="true"></span>

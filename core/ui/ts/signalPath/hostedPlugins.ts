@@ -10,6 +10,7 @@ import { getNodeEffectInfo } from "../presetV2.js";
 import { renderIcon } from "../iconAssets.js";
 import { getUnsupportedPluginSelection, inferPluginFormat, type PluginResourceSupportInfo } from "../pluginSupport.js";
 import { getLibraryResource } from "../resourceLibrary.js";
+import { getPluginGroupForResource, rememberResourceCategory } from "../effectGroups.js";
 import {
   nodeParamsPanelElement,
 } from "./state.js";
@@ -371,6 +372,10 @@ export function buildHostedPluginListHtml(node: GraphNode, resourceIndex: number
   const favoriteIds = getHostedPluginFavoriteIds(resources);
   const current = getNodeResourceAtIndex(node, resourceIndex);
   const isLoading = Boolean(getHostedPluginPendingLoad(node.id, resourceIndex));
+  const loadedCategory = node.config?.pluginCategory;
+  if (current.id && !current.filePath && typeof loadedCategory === "string" && loadedCategory) {
+    rememberResourceCategory(current.id, loadedCategory);
+  }
   const exposedAttr = exposedResourceId ? ` data-exposed-resource-id="${escapeHtml(exposedResourceId)}"` : "";
 
   const rows = sortedResources.map((res: LibraryResource) => {
@@ -380,13 +385,15 @@ export function buildHostedPluginListHtml(node: GraphNode, resourceIndex: number
     const formatLabel = format ? format.toUpperCase() : "";
     const path = res.filePath || "";
     const favoriteTitle = isFavorite ? "Remove from favourites" : "Add to favourites";
+    const group = getPluginGroupForResource(res.id);
+    const groupAttr = group ? ` data-effect-group="${group}"` : "";
     return `
       <div
         class="plugin-host-item${isSelected ? " is-selected" : ""}${isFavorite ? " is-favorite" : ""}"
         data-node-id="${escapeHtml(node.id)}"
         data-resource-id="${escapeHtml(res.id)}"
         data-resource-index="${resourceIndex}"
-        ${exposedAttr}
+        ${exposedAttr}${groupAttr}
         role="button"
         aria-selected="${isSelected ? "true" : "false"}"
         tabindex="0"

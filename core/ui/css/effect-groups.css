@@ -23,6 +23,26 @@
   --node-face: color-mix(in srgb, var(--effect-group-color) var(--effect-group-fill), var(--bg-card));
 }
 
+/* The plugin host's list rows and a hosted plugin's editor take the group colour too. A row
+   whose plugin has not loaded yet has no group and stays as it is. */
+:root[data-effect-colors="user"] .plugin-host-item[data-effect-group] {
+  border-left: 4px solid var(--effect-group-color);
+  background: color-mix(in srgb, var(--effect-group-color) calc(var(--effect-group-fill) * 0.6), transparent);
+}
+
+:root[data-effect-colors="user"] .plugin-host-item[data-effect-group].is-selected {
+  background: color-mix(in srgb, var(--effect-group-color) var(--effect-group-fill), transparent);
+  border-color: var(--effect-group-color);
+}
+
+:root[data-effect-colors="user"] .default-effect-shell[data-effect-group] {
+  border-color: var(--effect-group-color);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--effect-group-color) var(--effect-group-fill), transparent),
+    color-mix(in srgb, var(--effect-group-color) var(--effect-group-fill), transparent)
+  );
+}
+
 /* ── The Appearance screen ──────────────────────────────────────────────────── */
 
 .settings-row-label {

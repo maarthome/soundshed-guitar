@@ -160,11 +160,45 @@ export function getPluginCategoryForNode(nodeId: string): string {
   return pluginCategoryByNode.get(nodeId) ?? "";
 }
 
+/** Hosted plugins' kinds, by library resource, so the plugin list can colour rows it has seen load. */
+const RESOURCE_CATEGORY_KEY = "soundshed.pluginCategoryByResource";
+const pluginCategoryByResource = new Map<string, string>();
+try {
+  const stored = JSON.parse(localStorage.getItem(RESOURCE_CATEGORY_KEY) ?? "{}") as Record<string, unknown>;
+  for (const [id, category] of Object.entries(stored)) {
+    if (typeof category === "string" && category) {
+      pluginCategoryByResource.set(id, category);
+    }
+  }
+} catch {
+  // No storage, or unreadable: rows just stay neutral until a plugin loads.
+}
+
+/** The effect group of a library plugin once it has loaded in this browser; "" before. */
+export function getPluginGroupForResource(resourceId: string | undefined): EffectGroupId | "" {
+  const category = resourceId ? pluginCategoryByResource.get(resourceId) : undefined;
+  return category ? effectGroupForPluginCategory(category) : "";
+}
+
+/** A plugin already loaded by a preset reports its kind in its node's config: the list learns it from there. */
+export function rememberResourceCategory(resourceId: string, category: string): void {
+  if (pluginCategoryByResource.get(resourceId) === category) {
+    return;
+  }
+  pluginCategoryByResource.set(resourceId, category);
+  try {
+    localStorage.setItem(RESOURCE_CATEGORY_KEY, JSON.stringify(Object.fromEntries(pluginCategoryByResource)));
+  } catch {
+    // Storage unavailable: the colour lasts until the page is reloaded.
+  }
+}
+
 /**
  * hostedPluginResourceLoadCompleted's pluginCategory. The box is already drawn by then, so its
- * group is put right in place rather than the chain drawn again.
+ * group is put right in place rather than the chain drawn again; the same goes for the plugin's
+ * row in the plugin list and for the editor panel when it is that node's.
  */
-export function notePluginCategory(nodeId: string, category: string): void {
+export function notePluginCategory(nodeId: string, category: string, resourceId?: string): void {
   if (!nodeId || !category) {
     return;
   }
@@ -173,6 +207,19 @@ export function notePluginCategory(nodeId: string, category: string): void {
   for (const element of Array.from(document.querySelectorAll<HTMLElement>(".signal-node[data-node-id]"))) {
     if (element.dataset.nodeId === nodeId) {
       element.dataset.effectGroup = group;
+    }
+  }
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>(".default-effect-shell[data-host-node-id]"))) {
+    if (element.dataset.hostNodeId === nodeId) {
+      element.dataset.effectGroup = group;
+    }
+  }
+  if (resourceId) {
+    rememberResourceCategory(resourceId, category);
+    for (const element of Array.from(document.querySelectorAll<HTMLElement>(".plugin-host-item[data-resource-id]"))) {
+      if (element.dataset.resourceId === resourceId) {
+        element.dataset.effectGroup = group;
+      }
     }
   }
 }

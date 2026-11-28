@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+* **Hosted plugin list and editor coloured by group (my_gui)**: in Appearance's User mode the plugin host's list now marks each plugin you have loaded with its group's colour, and a hosted plugin's editor panel is tinted in it, like its box in the chain. A plugin that has never been loaded stays plain until it first is.
 * **Browser remote access logs in by itself (my_gui)**: the web page for remote access is now Soundshed's own, built on noVNC. Open `https://<pi>:6080/?password=<your password>` and it connects straight away, user name included, scaled to the window, and reconnects after a drop. Without the password in the address it asks once, and "Remember in this browser" makes the plain address log in by itself after that.
 * **EXIT button (my_gui, Linux standalone)**: an **EXIT** button under the gear, at the bottom of the rail, opens a window with **Cancel**, **POWER OFF** and **EXIT APP**. POWER OFF saves your current state and switches the computer off; EXIT APP closes the app. In the Raspberry Pi kiosk, closing the app now also ends the kiosk session instead of leaving an empty screen.
 * **Hosted plugins coloured from the start (my_gui)**: in Appearance's User mode a hosted LV2 or VST3 plugin now gets its group's colour as soon as a preset loads, not only after choosing the plugin again.
