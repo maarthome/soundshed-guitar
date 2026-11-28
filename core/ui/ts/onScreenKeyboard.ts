@@ -299,6 +299,24 @@ function restoreField(field: Field): void {
   }
 }
 
+function closeAndRestore(): void {
+  if (target) {
+    restoreField(target);
+  }
+  close();
+}
+
+/** Keeps the keyboard from outliving its field: the field left the page, was hidden, or lost focus quietly. */
+function watchTarget(): void {
+  if (!target) {
+    return;
+  }
+  const gone = !target.isConnected || target.offsetParent === null;
+  if (gone || document.activeElement !== target || !document.hasFocus()) {
+    closeAndRestore();
+  }
+}
+
 function close(): void {
   stopRepeat();
   if (keyboard) {
@@ -336,6 +354,29 @@ export function initOnScreenKeyboard(): void {
   });
 
   window.addEventListener("resize", measure);
+
+  // A tap on anything that is not a field or the keyboard leaves the field, even where the
+  // browser keeps focus on it. A plugin's own window taking focus counts as leaving too.
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const hit = event.target as HTMLElement | null;
+      if (!target || !hit || keyboard?.contains(hit) || asField(hit)) {
+        return;
+      }
+      target.blur();
+      closeAndRestore();
+    },
+    true,
+  );
+  window.addEventListener("blur", () => window.setTimeout(watchTarget, 0));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && target) {
+      target.blur();
+      closeAndRestore();
+    }
+  });
+  window.setInterval(watchTarget, 500);
 
   const select = document.getElementById("on-screen-keyboard-select") as HTMLSelectElement | null;
   if (select) {
